@@ -95,6 +95,7 @@ server_script 'myresource.so'
 ## To do
 
 - Windows builds should work but are untested
+- RedM is also expected to work but is untested
 - `fx::onCommand` is not yet functional (I think it requires `IScriptRefRuntime`)
 
 ## License
