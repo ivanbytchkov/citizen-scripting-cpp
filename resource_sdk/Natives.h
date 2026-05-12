@@ -4,7 +4,6 @@
 
 #include <string>
 #include <cstdint>
-#include <cstdio>
 #include <cstring>
 
 namespace fx::natives

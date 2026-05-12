@@ -299,4 +299,10 @@ inline Value parse(std::string_view json)
     return p.parseValue();
 }
 
+inline Value makeString(const std::string& s) { Value v; v.kind = Value::Kind::String; v.scalar = s; return v; }
+inline Value makeInt(int n) { Value v; v.kind = Value::Kind::Number; v.scalar = std::to_string(n); return v; }
+inline Value makeNumber(double n) { Value v; v.kind = Value::Kind::Number; char buf[32]; snprintf(buf, sizeof(buf), "%g", n); v.scalar = buf; return v; }
+inline Value makeBool(bool b) { Value v; v.kind = Value::Kind::Bool; v.scalar = b ? "true" : "false"; return v; }
+inline Value makeNull() { return {}; }
+
 }

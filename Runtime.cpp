@@ -62,8 +62,12 @@ result_t OM_DECL Runtime::Create(IScriptHost* host)
 result_t OM_DECL Runtime::Destroy()
 {
     m_refs.clear();
-    delete m_ctx;
-    m_ctx = nullptr;
+    if (m_ctx)
+    {
+        m_ctx->dispatchStop();
+        delete m_ctx;
+        m_ctx = nullptr;
+    }
 #ifndef _WIN32
     if (m_libHandle) { dlclose(m_libHandle); m_libHandle = nullptr; }
 #else
@@ -81,6 +85,7 @@ void OM_DECL Runtime::SetParentObject(void* obj)
 result_t OM_DECL Runtime::Tick()
 {
     if (!m_ctx) return FX_S_OK;
+    BoundaryGuard boundary(m_host, m_nextBoundaryId++);
     try
     {
         m_ctx->dispatchTick();
@@ -99,6 +104,7 @@ result_t OM_DECL Runtime::Tick()
 result_t OM_DECL Runtime::TriggerEvent(char* eventName, char* argsSerialized, uint32_t serializedSize, char* sourceId)
 {
     if (!m_ctx || !eventName) return FX_S_OK;
+    BoundaryGuard boundary(m_host, m_nextBoundaryId++);
     try
     {
         fx::json::Value args = fx::msgpack::decode(argsSerialized, serializedSize);
@@ -134,6 +140,7 @@ result_t OM_DECL Runtime::CallRef(int32_t refIdx, char* argsSerialized, uint32_t
 {
     auto it = m_refs.find(refIdx);
     if (it == m_refs.end()) return FX_E_INVALIDARG;
+    BoundaryGuard boundary(m_host, m_nextBoundaryId++);
     std::vector<char> result;
     try
     {

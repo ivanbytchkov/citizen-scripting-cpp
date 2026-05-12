@@ -1,14 +1,14 @@
 #pragma once
 
-#include "../Json.h"
+#include "Types.h"
 #include "msgpack.h"
 #include "../cfx/fxScripting.h"
 
-#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <cstdio>
 #include <cstdarg>
 
@@ -21,273 +21,53 @@
 namespace fx
 {
 
-class EventArgs
-{
-public:
-    explicit EventArgs(const json::Value& arr) : m_arr(arr) {}
-    size_t size() const { return m_arr.size(); ; }
-    template<typename T> T get(size_t i) const;
-    std::string str (size_t i) const { return m_arr.at(i).asStr(); ; }
-    int integer(size_t i) const { return m_arr.at(i).asInt(); ; }
-    double number (size_t i) const { return m_arr.at(i).asNum(); ; }
-    bool boolean(size_t i) const { return m_arr.at(i).asBool(); ; }
-    bool isNull (size_t i) const { return m_arr.at(i).isNull(); ; }
-    std::string funcRef(size_t i) const
-    {
-        const auto& v = m_arr.at(i);
-        return v.kind == json::Value::Kind::FuncRef ? v.scalar : std::string{};
-    }
-
-private:
-    const json::Value& m_arr;
-};
-
-template<> inline std::string EventArgs::get<std::string>(size_t i) const { return str(i); ; }
-template<> inline int EventArgs::get<int>(size_t i) const { return integer(i); ; }
-template<> inline double EventArgs::get<double>(size_t i) const { return number(i); ; }
-template<> inline float EventArgs::get<float>(size_t i) const { return static_cast<float>(number(i)); ; }
-template<> inline bool EventArgs::get<bool>(size_t i) const { return boolean(i); ; }
-
-using EventHandler = std::function<void(const std::string& source, EventArgs)>;
-using TickHandler = std::function<void()>;
-using CommandHandler = std::function<void(const std::string& source, const std::vector<std::string>& args)>;
-using RefCallback = std::function<std::vector<char>(const char* argsSerialized, uint32_t argsSize)>;
-using AddRefFn = std::function<int32_t(RefCallback)>;
-using ExportHandler = std::function<json::Value(EventArgs)>;
-
 class ResourceContext
 {
-public: ResourceContext(IScriptHost* host, IScriptRuntime* runtime, std::string name, IScriptRuntimeHandler* handler = nullptr, AddRefFn addRefFn = nullptr) : m_host(host), m_runtime(runtime), m_name(std::move(name)), m_handler(fx::OMPtr<IScriptRuntimeHandler>(handler)), m_addRef(std::move(addRefFn)) {}
+public:
+    ResourceContext(IScriptHost* host, IScriptRuntime* runtime, std::string name, IScriptRuntimeHandler* handler = nullptr, AddRefFn addRefFn = nullptr) : m_host(host), m_runtime(runtime), m_name(std::move(name)), m_handler(fx::OMPtr<IScriptRuntimeHandler>(handler)), m_addRef(std::move(addRefFn)) {}
 
-    void on(const std::string& event, EventHandler h)
-    {
-        bool first = m_eventHandlers.find(event) == m_eventHandlers.end();
-        m_eventHandlers[event].push_back(std::move(h));
+    // Events
+    void on(const std::string& event, EventHandler h);
+    void registerNetEvent(const std::string& event);
+    void onNet(const std::string& event, EventHandler h);
+    void onTick(TickHandler h);
+    void onCommand(const std::string& command, CommandHandler h);
 
-        if (first)
-        {
-            PushEnvironment env(m_handler.GetRef(), m_runtime);
-            fxNativeContext ctx{};
-            ctx.nativeIdentifier = HashString("REGISTER_RESOURCE_AS_EVENT_HANDLER");
-            ctx.arguments[0] = reinterpret_cast<uintptr_t>(event.c_str());
-            ctx.numArguments = 1;
-            m_host->InvokeNative(ctx);
-        }
-    }
+    // Lifecycle
+    void onStop(StopHandler h);
 
-    void onTick(TickHandler h)
-    {
-        m_tickHandlers.push_back(std::move(h));
-    }
+    // Timers
+    int32_t setTimeout(uint32_t ms, std::function<void()> cb);
+    int32_t setInterval(uint32_t ms, std::function<void()> cb);
+    void clearTimer(int32_t id);
 
-    void onCommand(const std::string& command, CommandHandler h)
-    {
-        m_commandHandlers[command].push_back(std::move(h));
-        if (!m_addRef)
-        {
-            fprintf(stderr, "[fx-cpp-sdk] onCommand('%s'): no ref support available\n", command.c_str());
-            return;
-        }
+    // exports
+    void addExport(const std::string& name, ExportHandler handler);
+    json::Value callExport(const std::string& resource, const std::string& name, const std::vector<std::string>& args = {});
 
-        int32_t refIdx = m_addRef([this, command](const char* argsSerialized, uint32_t argsSize) -> std::vector<char> {
-            fx::json::Value args = fx::msgpack::decode(argsSerialized, argsSize);
-            if (args.kind != fx::json::Value::Kind::Array) return {};
-            std::string source = args.size() > 0 ? std::to_string(args.at(0).asInt()) : "0";
-            std::vector<std::string> cmdArgs;
-            if (args.size() > 1 && args.at(1).kind == fx::json::Value::Kind::Array)
-                for (size_t i = 0; i < args.at(1).size(); ++i)
-                    cmdArgs.push_back(args.at(1).at(i).asStr());
-            dispatchCommand(command, source, cmdArgs);
-            return { static_cast<char>(0xC0) };
-        });
+    // Emit
+    void trace(const char* fmt, ...);
+    void emit(const std::string& event, const std::vector<std::string>& rawArgs = {});
+    void emitNet(const std::string& event, int target, const std::vector<std::string>& rawArgs = {});
 
-        char* refString = nullptr;
-        m_host->CanonicalizeRef(refIdx, m_runtime->GetInstanceId(), &refString);
-        if (!refString) return;
-        PushEnvironment env(m_handler.GetRef(), m_runtime);
-        fxNativeContext ctx{};
-        ctx.nativeIdentifier = HashString("REGISTER_COMMAND");
-        ctx.arguments[0] = reinterpret_cast<uintptr_t>(command.c_str());
-        ctx.arguments[1] = reinterpret_cast<uintptr_t>(refString);
-        ctx.arguments[2] = 0;
-        ctx.numArguments = 3;
-        m_host->InvokeNative(ctx);
-        fwFree(refString);
-    }
+    // Statebags
+    void setStateBagValue(const std::string& bagName, const std::string& key, const json::Value& value, bool replicated = true);
+    void setPlayerState(int serverId, const std::string& key, const json::Value& value, bool replicated = true);
+    void setEntityState(int netId, const std::string& key, const json::Value& value, bool replicated = true);
+    void setGlobalState(const std::string& key, const json::Value& value, bool replicated = true);
 
-    void addExport(const std::string& name, ExportHandler handler)
-    {
-        if (!m_addRef) return;
+    // Metadata
+    std::string getResourceMetadata(const std::string& key, int index = 0);
+    int getNumResourceMetadata(const std::string& key);
 
-        int32_t refIdx = m_addRef([handler](const char* argsSerialized, uint32_t argsSize) -> std::vector<char> {
-            json::Value args = msgpack::decode(argsSerialized, argsSize);
-            if (args.kind != json::Value::Kind::Array)
-            {
-                json::Value wrapper;
-                wrapper.kind = json::Value::Kind::Array;
-                wrapper.children.push_back(std::move(args));
-                args = std::move(wrapper);
-            }
-            EventArgs ea(args);
-            json::Value result = handler(ea);
-            json::Value arr;
-            arr.kind = json::Value::Kind::Array;
-            arr.children.push_back(std::move(result));
-            auto encoded = msgpack::encode(arr);
-            return std::vector<char>(encoded.begin(), encoded.end());
-        });
+    void dispatchTick();
+    void dispatchEvent(const std::string& name, const json::Value& args, const std::string& source);
+    void dispatchCommand(const std::string& command, const std::string& source, const std::vector<std::string>& args);
+    void dispatchStop();
 
-        char* refString = nullptr;
-        m_host->CanonicalizeRef(refIdx, m_runtime->GetInstanceId(), &refString);
-        if (!refString) return;
-        std::string exportRef = refString;
-        fwFree(refString);
-
-        std::string eventName = "__cfx_export_" + m_name + "_" + name;
-        on(eventName, [this, exportRef](const std::string& /*source*/, EventArgs args) {
-            if (args.size() == 0) return;
-            std::string setterRef = args.funcRef(0);
-            if (setterRef.empty()) return;
-
-            json::Value refVal;
-            refVal.kind = json::Value::Kind::FuncRef;
-            refVal.scalar = exportRef;
-            json::Value arr;
-            arr.kind = json::Value::Kind::Array;
-            arr.children.push_back(std::move(refVal));
-            auto payload = msgpack::encode(arr);
-
-            PushEnvironment env(m_handler.GetRef(), m_runtime);
-            fx::OMPtr<IScriptBuffer> retBuf;
-            m_host->InvokeFunctionReference(
-                const_cast<char*>(setterRef.c_str()),
-                reinterpret_cast<char*>(payload.data()),
-                static_cast<uint32_t>(payload.size()),
-                retBuf.ReleaseAndGetAddressOf()
-            );
-        });
-    }
-
-    json::Value callExport(const std::string& resource, const std::string& name, const std::vector<std::string>& args = {})
-    {
-        if (!m_addRef) return {};
-
-        auto capturedRef = std::make_shared<std::string>();
-        int32_t setterIdx = m_addRef([capturedRef](const char* argsSerialized, uint32_t argsSize) -> std::vector<char> {
-            json::Value decoded = msgpack::decode(argsSerialized, argsSize);
-            if (decoded.kind == json::Value::Kind::FuncRef)
-                *capturedRef = decoded.scalar;
-            else if (decoded.kind == json::Value::Kind::Array && decoded.size() > 0 && decoded.at(0).kind == json::Value::Kind::FuncRef)
-                *capturedRef = decoded.at(0).scalar;
-            return { static_cast<char>(0xC0) };
-        });
-
-        char* setterRefStr = nullptr;
-        m_host->CanonicalizeRef(setterIdx, m_runtime->GetInstanceId(), &setterRefStr);
-        if (!setterRefStr) return {};
-
-        json::Value setterVal;
-        setterVal.kind = json::Value::Kind::FuncRef;
-        setterVal.scalar = setterRefStr;
-        fwFree(setterRefStr);
-
-        json::Value setterArr;
-        setterArr.kind = json::Value::Kind::Array;
-        setterArr.children.push_back(std::move(setterVal));
-        auto setterPayload = msgpack::encode(setterArr);
-
-        std::string eventName = "__cfx_export_" + resource + "_" + name;
-        {
-            PushEnvironment env(m_handler.GetRef(), m_runtime);
-            fxNativeContext nctx{};
-            nctx.nativeIdentifier = HashString("TRIGGER_EVENT_INTERNAL");
-            nctx.arguments[0] = reinterpret_cast<uintptr_t>(eventName.c_str());
-            nctx.arguments[1] = reinterpret_cast<uintptr_t>(setterPayload.data());
-            nctx.arguments[2] = static_cast<uintptr_t>(setterPayload.size());
-            nctx.numArguments = 3;
-            m_host->InvokeNative(nctx);
-        }
-
-        if (capturedRef->empty()) return {};
-        auto userPayload = msgpack::encodeArgs(args);
-        fx::OMPtr<IScriptBuffer> retBuf;
-        {
-            PushEnvironment env(m_handler.GetRef(), m_runtime);
-            m_host->InvokeFunctionReference(
-                const_cast<char*>(capturedRef->c_str()),
-                reinterpret_cast<char*>(userPayload.data()),
-                static_cast<uint32_t>(userPayload.size()),
-                retBuf.ReleaseAndGetAddressOf()
-            );
-        }
-        if (!retBuf.GetRef()) return {};
-        json::Value result = msgpack::decode(retBuf->GetBytes(), retBuf->GetLength());
-        if (result.kind == json::Value::Kind::Array && result.size() > 0)
-            return result.at(0);
-        return result;
-    }
-
-    void trace(const char* fmt, ...)
-    {
-        char buf[4096];
-        va_list ap;
-        va_start(ap, fmt);
-        vsnprintf(buf, sizeof(buf), fmt, ap);
-        va_end(ap);
-        m_host->ScriptTrace(buf);
-        fprintf(stderr, "[script:%s] %s", m_name.c_str(), buf);
-    }
-
-    void emit(const std::string& event, const std::vector<std::string>& rawArgs = {})
-    {
-        auto payload = fx::msgpack::encodeArgs(rawArgs);
-        PushEnvironment env(m_handler.GetRef(), m_runtime);
-        fxNativeContext ctx{};
-        ctx.nativeIdentifier = HashString("TRIGGER_EVENT_INTERNAL");
-        ctx.arguments[0] = reinterpret_cast<uintptr_t>(event.c_str());
-        ctx.arguments[1] = reinterpret_cast<uintptr_t>(payload.data());
-        ctx.arguments[2] = static_cast<uintptr_t>(payload.size());
-        ctx.numArguments = 3;
-        m_host->InvokeNative(ctx);
-    }
-
-    void emitNet(const std::string& event, int target, const std::vector<std::string>& rawArgs = {})
-    {
-        auto payload = fx::msgpack::encodeArgs(rawArgs);
-        PushEnvironment env(m_handler.GetRef(), m_runtime);
-        fxNativeContext ctx{};
-        ctx.nativeIdentifier = HashString("TRIGGER_CLIENT_EVENT_INTERNAL");
-        ctx.arguments[0] = reinterpret_cast<uintptr_t>(event.c_str());
-        ctx.arguments[1] = static_cast<uintptr_t>(target);
-        ctx.arguments[2] = reinterpret_cast<uintptr_t>(payload.data());
-        ctx.arguments[3] = static_cast<uintptr_t>(payload.size());
-        ctx.numArguments = 4;
-        m_host->InvokeNative(ctx);
-    }
-
-    void dispatchTick()
-    {
-        for (auto& h : m_tickHandlers) h();
-    }
-
-    void dispatchEvent(const std::string& name, const json::Value& args, const std::string& source)
-    {
-        auto it = m_eventHandlers.find(name);
-        if (it == m_eventHandlers.end()) return;
-        EventArgs ea(args);
-        for (auto& h : it->second) h(source, ea);
-    }
-
-    void dispatchCommand(const std::string& command, const std::string& source, const std::vector<std::string>& args)
-    {
-        auto it = m_commandHandlers.find(command);
-        if (it == m_commandHandlers.end()) return;
-        for (auto& h : it->second) h(source, args);
-    }
-
-    IScriptHost* getHost() { return m_host ; }
-    IScriptRuntime* getRuntime() { return m_runtime ; }
-    const std::string& resourceName() const { return m_name ; }
+    IScriptHost* getHost() { return m_host; }
+    IScriptRuntime* getRuntime() { return m_runtime; }
+    const std::string& resourceName() const { return m_name; }
 
 private:
     IScriptHost* m_host = nullptr;
@@ -295,15 +75,27 @@ private:
     fx::OMPtr<IScriptRuntimeHandler> m_handler;
     AddRefFn m_addRef;
     std::string m_name;
-    std::unordered_map<std::string, std::vector<EventHandler>>m_eventHandlers;
-    std::unordered_map<std::string, std::vector<CommandHandler>>m_commandHandlers;
-    std::vector<TickHandler>m_tickHandlers;
+    std::unordered_map<std::string, std::vector<EventHandler>> m_eventHandlers;
+    std::unordered_map<std::string, std::vector<CommandHandler>> m_commandHandlers;
+    std::vector<TickHandler> m_tickHandlers;
+    std::unordered_map<int32_t, TimerEntry> m_timers;
+    int32_t m_nextTimerId = 1;
+    std::unordered_set<std::string> m_netSafeEvents;
+    std::vector<StopHandler> m_stopHandlers;
 };
 
 namespace detail { inline ResourceContext* g_ctx = nullptr; }
-inline ResourceContext* GetContext() { return detail::g_ctx ; }
+inline ResourceContext* GetContext() { return detail::g_ctx; }
 
 }
+
+#include "../impl/Events.inl"
+#include "../impl/Lifecycle.inl"
+#include "../impl/Timers.inl"
+#include "../impl/Exports.inl"
+#include "../impl/Emit.inl"
+#include "../impl/Statebags.inl"
+#include "../impl/Metadata.inl"
 
 #define FXCPP_RESOURCE \
     static void _fxcpp_resource_body(fx::ResourceContext&); \
