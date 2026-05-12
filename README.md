@@ -2,10 +2,10 @@
 
 A C++ runtime for CitzenFX.
 
-<img width="886" height="101" alt="Screenshot_20260511_185310" src="https://github.com/user-attachments/assets/d07ebe60-02a7-476c-bfbf-45f11001bf5c" />
-<img width="638" height="27" alt="Screenshot_20260511_185329" src="https://github.com/user-attachments/assets/461c85e8-9254-4eee-a215-2dd2db24a45b" />
-<img width="421" height="81" alt="Screenshot_20260511_185401" src="https://github.com/user-attachments/assets/01d285fa-b993-4778-9fb5-f6bc7d15ed23" />
-<img width="715" height="23" alt="Screenshot_20260511_185433" src="https://github.com/user-attachments/assets/9026b537-a16f-48ad-ae4a-6ff8f1af77bf" />
+<img width="507" height="78" alt="Screenshot_20260511_200823" src="https://github.com/user-attachments/assets/8c5f351b-a243-4e39-bce4-1e638f4d7224" />
+<img width="462" height="21" alt="Screenshot_20260511_201107" src="https://github.com/user-attachments/assets/03fbdbdb-bf02-434c-9140-c15e56074458" />
+<img width="513" height="81" alt="Screenshot_20260511_201233" src="https://github.com/user-attachments/assets/ca1e6669-91a9-438b-8bc2-2fd44ca45fee" />
+<img width="561" height="20" alt="Screenshot_20260511_201314" src="https://github.com/user-attachments/assets/e462bc8c-cd42-4ae2-a5c4-b74ea3c94b59" />
 
 ## Building
 
@@ -96,7 +96,6 @@ server_script 'myresource.so'
 
 - Windows builds should work but are untested
 - RedM is also expected to work but is untested
-- `fx::onCommand` is not yet functional (I think it requires `IScriptRefRuntime`)
 
 ## License
 
