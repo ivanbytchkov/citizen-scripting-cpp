@@ -32,11 +32,6 @@ static std::string GetResourcePath(IScriptHost* host)
     return path ? std::string(path) : std::string{};
 }
 
-static bool EndsWith(std::string_view s, std::string_view suffix)
-{
-    return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
-}
-
 Runtime::Runtime() : m_instanceId(static_cast<int32_t>(reinterpret_cast<intptr_t>(this) & 0x7FFFFFFF))
 {}
 
@@ -108,13 +103,7 @@ result_t OM_DECL Runtime::TriggerEvent(char* eventName, char* argsSerialized, ui
     try
     {
         fx::json::Value args = fx::msgpack::decode(argsSerialized, serializedSize);
-        if (args.kind != fx::json::Value::Kind::Array)
-        {
-            fx::json::Value wrapper;
-            wrapper.kind = fx::json::Value::Kind::Array;
-            wrapper.children.push_back(std::move(args));
-            args = std::move(wrapper);
-        }
+        fx::json::ensureArray(args);
         std::string src = sourceId ? sourceId : "-1";
         m_ctx->dispatchEvent(eventName, args, src);
     }
@@ -182,9 +171,9 @@ int32_t OM_DECL Runtime::HandlesFile(char* scriptFile, IScriptHostWithResourceDa
     if (!scriptFile) return 0;
     std::string_view file(scriptFile);
 #ifdef _WIN32
-    return EndsWith(file, ".dll") ? 1 : 0;
+    return file.ends_with(".dll") ? 1 : 0;
 #else
-    return EndsWith(file, ".so") ? 1 : 0;
+    return file.ends_with(".so") ? 1 : 0;
 #endif
 }
 

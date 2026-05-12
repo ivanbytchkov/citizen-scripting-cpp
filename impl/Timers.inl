@@ -37,7 +37,7 @@ inline void ResourceContext::dispatchTick()
         if (it == m_timers.end()) continue;
         auto cb = it->second.callback;
         if (it->second.intervalMs > 0)
-            it->second.nextFire = now + std::chrono::milliseconds(it->second.intervalMs);
+            it->second.nextFire += std::chrono::milliseconds(it->second.intervalMs);
         else
             m_timers.erase(it);
         cb();

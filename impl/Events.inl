@@ -6,14 +6,7 @@ inline void ResourceContext::on(const std::string& event, EventHandler h)
     bool first = m_eventHandlers.find(event) == m_eventHandlers.end();
     m_eventHandlers[event].push_back(std::move(h));
     if (first)
-    {
-        PushEnvironment env(m_handler.GetRef(), m_runtime);
-        fxNativeContext ctx{};
-        ctx.nativeIdentifier = HashString("REGISTER_RESOURCE_AS_EVENT_HANDLER");
-        ctx.arguments[0] = reinterpret_cast<uintptr_t>(event.c_str());
-        ctx.numArguments = 1;
-        m_host->InvokeNative(ctx);
-    }
+        invokeNative(HashString("REGISTER_RESOURCE_AS_EVENT_HANDLER"), reinterpret_cast<uintptr_t>(event.c_str()));
 }
 
 inline void ResourceContext::registerNetEvent(const std::string& event)
@@ -57,14 +50,7 @@ inline void ResourceContext::onCommand(const std::string& command, CommandHandle
     char* refString = nullptr;
     m_host->CanonicalizeRef(refIdx, m_runtime->GetInstanceId(), &refString);
     if (!refString) return;
-    PushEnvironment env(m_handler.GetRef(), m_runtime);
-    fxNativeContext ctx{};
-    ctx.nativeIdentifier = HashString("REGISTER_COMMAND");
-    ctx.arguments[0] = reinterpret_cast<uintptr_t>(command.c_str());
-    ctx.arguments[1] = reinterpret_cast<uintptr_t>(refString);
-    ctx.arguments[2] = 0;
-    ctx.numArguments = 3;
-    m_host->InvokeNative(ctx);
+    invokeNative(HashString("REGISTER_COMMAND"), reinterpret_cast<uintptr_t>(command.c_str()), reinterpret_cast<uintptr_t>(refString), uintptr_t(0));
     fwFree(refString);
 }
 

@@ -56,6 +56,39 @@ struct Reader
         return s;
     }
 
+    void validateCount(uint32_t n) const
+    {
+        if (n > static_cast<uint32_t>(end - p))
+            throw std::runtime_error("msgpack: element count exceeds remaining data");
+    }
+
+    json::Value readArray(uint32_t n)
+    {
+        validateCount(n);
+        json::Value v;
+        v.kind = json::Value::Kind::Array;
+        v.children.reserve(n);
+        for (uint32_t i = 0; i < n; ++i) v.children.push_back(read());
+        return v;
+    }
+
+    json::Value readMap(uint32_t n)
+    {
+        validateCount(n);
+        json::Value v;
+        v.kind = json::Value::Kind::Object;
+        for (uint32_t i = 0; i < n; ++i) { std::string key = read().scalar; v.fields[key] = read(); }
+        return v;
+    }
+
+    json::Value readString(uint32_t n)
+    {
+        json::Value v;
+        v.kind = json::Value::Kind::String;
+        v.scalar = str(n);
+        return v;
+    }
+
     json::Value readExt(uint32_t dataLen)
     {
         int8_t type = static_cast<int8_t>(u8());
@@ -90,27 +123,9 @@ struct Reader
             v.scalar = std::to_string(static_cast<int8_t>(b));
             return v;
         }
-        if ((b & 0xE0) == 0xA0)
-        {
-            v.kind = json::Value::Kind::String;
-            v.scalar = str(b & 0x1F);
-            return v;
-        }
-        if ((b & 0xF0) == 0x80)
-        {
-            v.kind = json::Value::Kind::Object;
-            uint32_t n = b & 0x0F;
-            for (uint32_t i = 0; i < n; ++i) { std::string key = read().scalar; v.fields[key] = read(); }
-            return v;
-        }
-        if ((b & 0xF0) == 0x90)
-        {
-            v.kind = json::Value::Kind::Array;
-            uint32_t n = b & 0x0F;
-            v.children.reserve(n);
-            for (uint32_t i = 0; i < n; ++i) v.children.push_back(read());
-            return v;
-        }
+        if ((b & 0xE0) == 0xA0) return readString(b & 0x1F);
+        if ((b & 0xF0) == 0x80) return readMap(b & 0x0F);
+        if ((b & 0xF0) == 0x90) return readArray(b & 0x0F);
 
         switch (b) {
         case 0xC0: v.kind = json::Value::Kind::Null; return v;
@@ -140,35 +155,15 @@ struct Reader
         case 0xD2: v.kind = json::Value::Kind::Number; v.scalar = std::to_string(static_cast<int32_t>(u32())); return v;
         case 0xD3: v.kind = json::Value::Kind::Number; v.scalar = std::to_string(static_cast<int64_t>(u64())); return v;
 
-        case 0xD9: { uint32_t n = u8(); v.kind = json::Value::Kind::String; v.scalar = str(n); return v ; }
-        case 0xDA: { uint32_t n = u16(); v.kind = json::Value::Kind::String; v.scalar = str(n); return v ; }
-        case 0xDB: { uint32_t n = u32(); v.kind = json::Value::Kind::String; v.scalar = str(n); return v ; }
+        case 0xD9: return readString(u8());
+        case 0xDA: return readString(u16());
+        case 0xDB: return readString(u32());
 
-        case 0xDC: {
-            uint32_t n = u16();
-            v.kind = json::Value::Kind::Array; v.children.reserve(n);
-            for (uint32_t i = 0; i < n; ++i) v.children.push_back(read());
-            return v;
-        }
-        case 0xDD: {
-            uint32_t n = u32();
-            v.kind = json::Value::Kind::Array; v.children.reserve(n);
-            for (uint32_t i = 0; i < n; ++i) v.children.push_back(read());
-            return v;
-        }
+        case 0xDC: return readArray(u16());
+        case 0xDD: return readArray(u32());
 
-        case 0xDE: {
-            uint32_t n = u16();
-            v.kind = json::Value::Kind::Object;
-            for (uint32_t i = 0; i < n; ++i) { std::string key = read().scalar; v.fields[key] = read(); }
-            return v;
-        }
-        case 0xDF: {
-            uint32_t n = u32();
-            v.kind = json::Value::Kind::Object;
-            for (uint32_t i = 0; i < n; ++i) { std::string key = read().scalar; v.fields[key] = read(); }
-            return v;
-        }
+        case 0xDE: return readMap(u16());
+        case 0xDF: return readMap(u32());
 
         case 0xC7: return readExt(u8());
         case 0xC8: return readExt(u16());

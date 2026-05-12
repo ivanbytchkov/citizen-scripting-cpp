@@ -282,8 +282,18 @@ struct Parser
             v.kind = Value::Kind::Number;
             size_t start = pos;
             if (peek() == '-') ++pos;
-            while (pos < src.size() && (std::isdigit(src[pos]) || src[pos] == '.' || src[pos] == 'e' || src[pos] == 'E' || src[pos] == '+' || src[pos] == '-'))
+            while (pos < src.size() && std::isdigit(src[pos])) ++pos;
+            if (pos < src.size() && src[pos] == '.')
+            {
                 ++pos;
+                while (pos < src.size() && std::isdigit(src[pos])) ++pos;
+            }
+            if (pos < src.size() && (src[pos] == 'e' || src[pos] == 'E'))
+            {
+                ++pos;
+                if (pos < src.size() && (src[pos] == '+' || src[pos] == '-')) ++pos;
+                while (pos < src.size() && std::isdigit(src[pos])) ++pos;
+            }
             v.scalar = std::string(src.substr(start, pos - start));
         }
         return v;
@@ -303,5 +313,16 @@ inline Value makeInt(int n) { Value v; v.kind = Value::Kind::Number; v.scalar = 
 inline Value makeNumber(double n) { Value v; v.kind = Value::Kind::Number; char buf[32]; snprintf(buf, sizeof(buf), "%g", n); v.scalar = buf; return v; }
 inline Value makeBool(bool b) { Value v; v.kind = Value::Kind::Bool; v.scalar = b ? "true" : "false"; return v; }
 inline Value makeNull() { return {}; }
+
+inline void ensureArray(Value& v)
+{
+    if (v.kind != Value::Kind::Array)
+    {
+        Value wrapper;
+        wrapper.kind = Value::Kind::Array;
+        wrapper.children.push_back(std::move(v));
+        v = std::move(wrapper);
+    }
+}
 
 }

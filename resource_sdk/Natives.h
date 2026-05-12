@@ -57,6 +57,7 @@ namespace detail
 template<typename... TArgs>
 inline uintptr_t invokeRaw(uint64_t hash, TArgs&&... args)
 {
+    static_assert(sizeof...(args) <= 32, "Native call exceeds 32-argument limit");
     auto* ctx = fx::detail::g_ctx;
     if (!ctx) return 0;
     fxNativeContext nctx{};

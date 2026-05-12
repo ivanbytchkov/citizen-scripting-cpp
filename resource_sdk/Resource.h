@@ -24,7 +24,11 @@ namespace fx
 class ResourceContext
 {
 public:
-    ResourceContext(IScriptHost* host, IScriptRuntime* runtime, std::string name, IScriptRuntimeHandler* handler = nullptr, AddRefFn addRefFn = nullptr) : m_host(host), m_runtime(runtime), m_name(std::move(name)), m_handler(fx::OMPtr<IScriptRuntimeHandler>(handler)), m_addRef(std::move(addRefFn)) {}
+    ResourceContext(IScriptHost* host, IScriptRuntime* runtime, std::string name, IScriptRuntimeHandler* handler = nullptr, AddRefFn addRefFn = nullptr) : m_host(host), m_runtime(runtime), m_name(std::move(name)), m_handler(fx::OMPtr<IScriptRuntimeHandler>(handler)), m_addRef(std::move(addRefFn))
+    {
+        fx::OMPtr<IScriptHost> h(host);
+        h.As(&m_metadataHost);
+    }
 
     // Events
     void on(const std::string& event, EventHandler h);
@@ -67,13 +71,28 @@ public:
 
     IScriptHost* getHost() { return m_host; }
     IScriptRuntime* getRuntime() { return m_runtime; }
+    IScriptHostWithResourceData* getMetadataHost() { return m_metadataHost.GetRef(); }
     const std::string& resourceName() const { return m_name; }
+
+    template<typename... Args>
+    void invokeNative(uint64_t hash, Args... args)
+    {
+        static_assert(sizeof...(args) <= 32, "Native call exceeds 32-argument limit");
+        PushEnvironment env(m_handler.GetRef(), m_runtime);
+        fxNativeContext ctx{};
+        ctx.nativeIdentifier = hash;
+        size_t idx = 0;
+        ((ctx.arguments[idx++] = static_cast<uintptr_t>(args)), ...);
+        ctx.numArguments = static_cast<int>(idx);
+        m_host->InvokeNative(ctx);
+    }
 
 private:
     IScriptHost* m_host = nullptr;
     IScriptRuntime* m_runtime = nullptr;
     fx::OMPtr<IScriptRuntimeHandler> m_handler;
     AddRefFn m_addRef;
+    fx::OMPtr<IScriptHostWithResourceData> m_metadataHost;
     std::string m_name;
     std::unordered_map<std::string, std::vector<EventHandler>> m_eventHandlers;
     std::unordered_map<std::string, std::vector<CommandHandler>> m_commandHandlers;

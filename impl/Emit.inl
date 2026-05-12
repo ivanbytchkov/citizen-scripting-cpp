@@ -15,28 +15,13 @@ inline void ResourceContext::trace(const char* fmt, ...)
 inline void ResourceContext::emit(const std::string& event, const std::vector<std::string>& rawArgs)
 {
     auto payload = fx::msgpack::encodeArgs(rawArgs);
-    PushEnvironment env(m_handler.GetRef(), m_runtime);
-    fxNativeContext ctx{};
-    ctx.nativeIdentifier = HashString("TRIGGER_EVENT_INTERNAL");
-    ctx.arguments[0] = reinterpret_cast<uintptr_t>(event.c_str());
-    ctx.arguments[1] = reinterpret_cast<uintptr_t>(payload.data());
-    ctx.arguments[2] = static_cast<uintptr_t>(payload.size());
-    ctx.numArguments = 3;
-    m_host->InvokeNative(ctx);
+    invokeNative(HashString("TRIGGER_EVENT_INTERNAL"), reinterpret_cast<uintptr_t>(event.c_str()), reinterpret_cast<uintptr_t>(payload.data()), payload.size());
 }
 
 inline void ResourceContext::emitNet(const std::string& event, int target, const std::vector<std::string>& rawArgs)
 {
     auto payload = fx::msgpack::encodeArgs(rawArgs);
-    PushEnvironment env(m_handler.GetRef(), m_runtime);
-    fxNativeContext ctx{};
-    ctx.nativeIdentifier = HashString("TRIGGER_CLIENT_EVENT_INTERNAL");
-    ctx.arguments[0] = reinterpret_cast<uintptr_t>(event.c_str());
-    ctx.arguments[1] = static_cast<uintptr_t>(target);
-    ctx.arguments[2] = reinterpret_cast<uintptr_t>(payload.data());
-    ctx.arguments[3] = static_cast<uintptr_t>(payload.size());
-    ctx.numArguments = 4;
-    m_host->InvokeNative(ctx);
+    invokeNative(HashString("TRIGGER_CLIENT_EVENT_INTERNAL"), reinterpret_cast<uintptr_t>(event.c_str()), static_cast<uintptr_t>(target), reinterpret_cast<uintptr_t>(payload.data()), payload.size());
 }
 
 }
