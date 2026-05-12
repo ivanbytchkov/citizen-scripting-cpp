@@ -64,7 +64,10 @@ result_t OM_DECL Runtime::Destroy()
     }
     if (m_ctx)
     {
-        m_ctx->dispatchStop();
+        {
+            fx::PushEnvironment env(static_cast<IScriptRuntime*>(this));
+            m_ctx->dispatchStop();
+        }
         m_ctx->cleanupBookmarks();
         delete m_ctx;
         m_ctx = nullptr;
@@ -208,19 +211,6 @@ result_t OM_DECL Runtime::GetMemoryUsage(int64_t* memUsage)
 {
     if (!memUsage) return FX_E_INVALIDARG;
     *memUsage = 0;
-
-#ifndef _WIN32
-    FILE* f = fopen("/proc/self/statm", "r");
-    if (f)
-    {
-        long size = 0, rss = 0;
-        if (fscanf(f, "%ld %ld", &size, &rss) == 2)
-            *memUsage = static_cast<int64_t>(rss) * 4096;
-        fclose(f);
-    }
-#else
-    *memUsage = 0;
-#endif
     return FX_S_OK;
 }
 
@@ -307,6 +297,7 @@ result_t OM_DECL Runtime::LoadFile(char* scriptFile)
     }
     m_ctx = new fx::ResourceContext(m_host, this, m_resourceName, runtimeHandler.GetRef(), [this](RefCallback cb) -> int32_t { return AddFuncRef(std::move(cb)); }, [this](int32_t idx) { m_refs.erase(idx); }, std::move(schedBookmark));
     fprintf(stderr, "[fx-cpp-sdk] Loaded C++ resource '%s'\n", m_resourceName.c_str());
+    fx::PushEnvironment env(static_cast<IScriptRuntime*>(this));
     try
     {
         initFn(m_ctx);

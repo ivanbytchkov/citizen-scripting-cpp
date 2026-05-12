@@ -71,7 +71,6 @@ inline fxNativeContext invokeCtx(uint64_t hash, TArgs&&... args)
     (detail::pushArg(nctx, idx++, std::forward<TArgs>(args)), ...);
     nctx.numArguments = static_cast<int>(idx);
     nctx.numResults = 3;
-    PushEnvironment env(ctx->getRuntimeHandler(), ctx->getRuntime());
     ctx->getHost()->InvokeNative(nctx);
     return nctx;
 }

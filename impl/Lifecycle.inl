@@ -13,7 +13,8 @@ inline void ResourceContext::dispatchStop()
     for (auto& h : handlers)
     {
         try { h(); }
-        catch (...) {}
+        catch (const std::exception& e) { trace("Unhandled exception in stop handler: %s\n", e.what()); }
+        catch (...) { trace("Unhandled non-standard exception in stop handler\n"); }
     }
 }
 

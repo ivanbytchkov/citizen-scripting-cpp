@@ -101,7 +101,6 @@ public:
     void invokeNative(uint64_t hash, Args... args)
     {
         static_assert(sizeof...(args) <= 32, "Native call exceeds 32-argument limit");
-        PushEnvironment env(m_handler.GetRef(), m_runtime);
         fxNativeContext ctx{};
         ctx.nativeIdentifier = hash;
         size_t idx = 0;
@@ -114,10 +113,9 @@ public:
     fxNativeContext invokeNativeResult(uint64_t hash, Args... args)
     {
         static_assert(sizeof...(args) <= 32, "Native call exceeds 32-argument limit");
-        PushEnvironment env(m_handler.GetRef(), m_runtime);
         fxNativeContext ctx{};
         ctx.nativeIdentifier = hash;
-        ctx.numResults = 1;
+        ctx.numResults = 3;
         size_t idx = 0;
         ((ctx.arguments[idx++] = static_cast<uintptr_t>(args)), ...);
         ctx.numArguments = static_cast<int>(idx);
