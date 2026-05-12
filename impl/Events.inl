@@ -31,7 +31,7 @@ inline void ResourceContext::onCommand(const std::string& command, CommandHandle
 
     if (!m_addRef)
     {
-        fprintf(stderr, "[fx-cpp-sdk] onCommand('%s'): no ref support available\n", command.c_str());
+        fprintf(stderr, "[citizen-scripting-cpp] onCommand('%s'): no ref support available\n", command.c_str());
         return;
     }
 

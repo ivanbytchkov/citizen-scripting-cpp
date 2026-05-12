@@ -170,7 +170,7 @@ struct Parser
     {
         skipWs();
         if (consume() != c)
-            throw std::runtime_error("fx-cpp-sdk::json: unexpected character");
+            throw std::runtime_error("citizen-scripting-cpp::json: unexpected character");
     }
 
     std::string parseString()
@@ -212,7 +212,7 @@ struct Parser
             }
             else out += c;
         }
-        throw std::runtime_error("fx-cpp-sdk::json: unterminated string");
+        throw std::runtime_error("citizen-scripting-cpp::json: unterminated string");
     }
 
     Value parseValue()
@@ -243,7 +243,7 @@ struct Parser
                 char sep = peek();
                 if (sep == ',') { consume(); }
                 else if (sep == '}') { consume(); break; }
-                else throw std::runtime_error("fx-cpp-sdk::json: expected , or }");
+                else throw std::runtime_error("citizen-scripting-cpp::json: expected , or }");
             }
         }
         else if (c == '[')
@@ -259,27 +259,27 @@ struct Parser
                 char sep = peek();
                 if (sep == ',') { consume(); }
                 else if (sep == ']') { consume(); break; }
-                else throw std::runtime_error("fx-cpp-sdk::json: expected , or ]");
+                else throw std::runtime_error("citizen-scripting-cpp::json: expected , or ]");
             }
         }
         else if (c == 't')
         {
             if (pos + 4 > src.size() || src.substr(pos, 4) != "true")
-                throw std::runtime_error("fx-cpp-sdk::json: unexpected token");
+                throw std::runtime_error("citizen-scripting-cpp::json: unexpected token");
             v.kind = Value::Kind::Bool; v.scalar = "true";
             pos += 4;
         }
         else if (c == 'f')
         {
             if (pos + 5 > src.size() || src.substr(pos, 5) != "false")
-                throw std::runtime_error("fx-cpp-sdk::json: unexpected token");
+                throw std::runtime_error("citizen-scripting-cpp::json: unexpected token");
             v.kind = Value::Kind::Bool; v.scalar = "false";
             pos += 5;
         }
         else if (c == 'n')
         {
             if (pos + 4 > src.size() || src.substr(pos, 4) != "null")
-                throw std::runtime_error("fx-cpp-sdk::json: unexpected token");
+                throw std::runtime_error("citizen-scripting-cpp::json: unexpected token");
             v.kind = Value::Kind::Null;
             pos += 4;
         }

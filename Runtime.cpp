@@ -243,13 +243,13 @@ result_t OM_DECL Runtime::LoadFile(char* scriptFile)
         root.pop_back();
     if (root.empty())
     {
-        fprintf(stderr, "[fx-cpp-sdk] Runtime: could not get resource path for '%s'\n", m_resourceName.c_str());
+        fprintf(stderr, "[citizen-scripting-cpp] Runtime: could not get resource path for '%s'\n", m_resourceName.c_str());
         return FX_E_INVALIDARG;
     }
     std::string_view scriptFileView(scriptFile);
     if (scriptFileView.find("..") != std::string_view::npos)
     {
-        fprintf(stderr, "[fx-cpp-sdk] Rejected script path with '..': '%s'\n", scriptFile);
+        fprintf(stderr, "[citizen-scripting-cpp] Rejected script path with '..': '%s'\n", scriptFile);
         return FX_E_INVALIDARG;
     }
 #ifdef _WIN32
@@ -257,7 +257,7 @@ result_t OM_DECL Runtime::LoadFile(char* scriptFile)
     m_libHandle = LoadLibraryA(fullPath.c_str());
     if (!m_libHandle)
     {
-        fprintf(stderr, "[fx-cpp-sdk] LoadLibraryA failed for '%s': error %lu\n", fullPath.c_str(), GetLastError());
+        fprintf(stderr, "[citizen-scripting-cpp] LoadLibraryA failed for '%s': error %lu\n", fullPath.c_str(), GetLastError());
         return FX_E_INVALIDARG;
     }
     auto* initFn = reinterpret_cast<void(*)(fx::ResourceContext*)>(GetProcAddress(static_cast<HMODULE>(m_libHandle), "fxcpp_init"));
@@ -266,14 +266,14 @@ result_t OM_DECL Runtime::LoadFile(char* scriptFile)
     m_libHandle = dlopen(fullPath.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!m_libHandle)
     {
-        fprintf(stderr, "[fx-cpp-sdk] dlopen failed for '%s': %s\n", fullPath.c_str(), dlerror());
+        fprintf(stderr, "[citizen-scripting-cpp] dlopen failed for '%s': %s\n", fullPath.c_str(), dlerror());
         return FX_E_INVALIDARG;
     }
     auto* initFn = reinterpret_cast<void(*)(fx::ResourceContext*)>(dlsym(m_libHandle, "fxcpp_init"));
 #endif
     if (!initFn)
     {
-        fprintf(stderr, "[fx-cpp-sdk] '%s' has no fxcpp_init export\n", fullPath.c_str());
+        fprintf(stderr, "[citizen-scripting-cpp] '%s' has no fxcpp_init export\n", fullPath.c_str());
         return FX_E_INVALIDARG;
     }
     fx::OMPtr<IScriptRuntimeHandler> runtimeHandler;
@@ -296,7 +296,7 @@ result_t OM_DECL Runtime::LoadFile(char* scriptFile)
         };
     }
     m_ctx = new fx::ResourceContext(m_host, this, m_resourceName, runtimeHandler.GetRef(), [this](RefCallback cb) -> int32_t { return AddFuncRef(std::move(cb)); }, [this](int32_t idx) { m_refs.erase(idx); }, std::move(schedBookmark));
-    fprintf(stderr, "[fx-cpp-sdk] Loaded C++ resource '%s'\n", m_resourceName.c_str());
+    fprintf(stderr, "[citizen-scripting-cpp] Loaded C++ resource '%s'\n", m_resourceName.c_str());
     fx::PushEnvironment env(static_cast<IScriptRuntime*>(this));
     try
     {
@@ -304,7 +304,7 @@ result_t OM_DECL Runtime::LoadFile(char* scriptFile)
     }
     catch (const std::exception& e)
     {
-        fprintf(stderr, "[fx-cpp-sdk] Exception during init of '%s': %s\n", m_resourceName.c_str(), e.what());
+        fprintf(stderr, "[citizen-scripting-cpp] Exception during init of '%s': %s\n", m_resourceName.c_str(), e.what());
         m_ctx->trace("Exception during resource init: %s\n", e.what());
         if (m_bookmarkHost.GetRef())
         {
@@ -322,7 +322,7 @@ result_t OM_DECL Runtime::LoadFile(char* scriptFile)
     }
     catch (...)
     {
-        fprintf(stderr, "[fx-cpp-sdk] Non-standard exception during init of '%s'\n", m_resourceName.c_str());
+        fprintf(stderr, "[citizen-scripting-cpp] Non-standard exception during init of '%s'\n", m_resourceName.c_str());
         if (m_bookmarkHost.GetRef())
         {
             m_bookmarkHost->RemoveBookmarks(static_cast<IScriptTickRuntimeWithBookmarks*>(this));

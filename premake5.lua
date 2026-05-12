@@ -1,4 +1,4 @@
-workspace "fx-cpp-sdk"
+workspace "citizen-scripting-cpp"
     configurations { "Debug", "Release" }
     architecture "x86_64"
     language "C++"
