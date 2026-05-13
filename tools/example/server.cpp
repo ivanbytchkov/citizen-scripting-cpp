@@ -50,7 +50,7 @@ Server
         if (it != pending->end()) pending->erase(it);
         std::string id = extractId(source);
         (*players)[id] = name;
-        std::string license = fx::natives::invoke<std::string>(HashString("GET_PLAYER_IDENTIFIER_BY_TYPE"), id.c_str(), "license2");
+        std::string license = fx::natives::cfx::GetPlayerIdentifierByType(id.c_str(), "license2");
         fx::trace("%s [%s] (%s) has connected. Players Online: %zu\n", name.c_str(), license.c_str(), id.c_str(), players->size());
     });
 
@@ -58,7 +58,7 @@ Server
         std::string reason = args.get<std::string>(0);
         std::string id = extractId(source);
         std::string name = players->count(id) ? (*players)[id] : "Unknown";
-        std::string license = fx::natives::invoke<std::string>(HashString("GET_PLAYER_IDENTIFIER_BY_TYPE"), id.c_str(), "license2");
+        std::string license = fx::natives::cfx::GetPlayerIdentifierByType(id.c_str(), "license2");
         players->erase(id);
         fx::trace("%s [%s] (%s) has disconnected (%s). Players Online: %zu\n", name.c_str(), license.c_str(), id.c_str(), reason.c_str(), players->size());
     });

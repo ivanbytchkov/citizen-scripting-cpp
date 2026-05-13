@@ -8,5 +8,6 @@
 #include "Statebags.h"
 #include "Metadata.h"
 #include "Native/Native.h"
+#include "Native/DB.h"
 #include "KVP.h"
 #include "Coroutine/Coroutine.h"

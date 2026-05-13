@@ -7,6 +7,7 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="$PROJECT_DIR/build"
 
 cd "$PROJECT_DIR"
+python3 tools/code-gen/build.py "$@"
 premake5 gmake2
 make -C "$BUILD_DIR" config=release \
     CC="zig cc -target x86_64-linux-musl" \
