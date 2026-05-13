@@ -230,6 +230,25 @@ def main():
         print("No natives fetched")
         sys.exit(1)
 
+    def param_sig(native):
+        return tuple(p.get("type", "") for p in native.get("params", []))
+
+    global_seen: dict[tuple, tuple[str, str]] = {}
+    for ns in all_ns:
+        for native in all_ns[ns]:
+            name = native.get("name")
+            if not name:
+                continue
+            key = (name, param_sig(native))
+            h = native.get("hash", "")
+            prev = global_seen.get(key)
+            if prev is None or len(h) > len(prev[1]):
+                global_seen[key] = (ns, h)
+
+    for ns in all_ns:
+        all_ns[ns] = [n for n in all_ns[ns]
+                if not n.get("name") or global_seen.get((n["name"], param_sig(n)), (None,))[0] == ns]
+
     blocks = []
     total_count = 0
     for ns in sorted(all_ns.keys()):

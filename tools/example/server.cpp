@@ -71,11 +71,22 @@ Server
     });
 
     fx::addStateBagChangeHandler("", "", [](const std::string& bagName, const std::string& key, const fx::json::Value& value, int source, bool replicated) {
-        fx::trace("[statebags] %s:%s changed (source=%d, replicated=%s)\n", bagName.c_str(), key.c_str(), source, replicated ? "true" : "false");
+        fx::trace("[fx::addStateBagChangeHandler] %s:%s changed (source=%d, replicated=%s)\n", bagName.c_str(), key.c_str(), source, replicated ? "true" : "false");
+    });
+
+    fx::addExport("getPlayerInfo", [](fx::EventArgs args) -> fx::json::Value {
+        if (args.size() == 0) return "unknown";
+        std::string src = std::to_string(args.get<int>(0));
+        std::string name = fx::natives::cfx::GetPlayerName(src.c_str());
+        int ping = fx::natives::cfx::GetPlayerPing(src.c_str());
+        return name + " (ping=" + std::to_string(ping) + "ms)";
     });
 
     fx::onCommand("c++", [](const std::string& source, const std::vector<std::string>&) {
         if (source.empty() || source == "0") return;
+        std::string name = fx::getCurrentResourceName();
+        fx::json::Value info = fx::callExport(name, "getPlayerInfo", {std::stoi(source)});
+        fx::trace("[fx::addExport] %s\n", info.asStr("failed").c_str());
         fx::callExport("fwa", "SendChatMessage", {std::stoi(source), "^#f0a0e4[INFO] ^#ffffffHello from ^#f0a0e4C++^#ffffff!"});
     });
 }
