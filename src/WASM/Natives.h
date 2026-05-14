@@ -106,7 +106,13 @@ inline TResult invoke(uint64_t hash, TArgs&&... args)
     }
     else if constexpr (std::is_same_v<TResult, std::string>)
     {
-        auto ctx = invokeCtx(hash, std::forward<TArgs>(args)...);
+        NativeCtx ctx{};
+        ctx.hash = hash;
+        ctx.numArgs = static_cast<uint32_t>(sizeof...(args));
+        ctx.numResults = 3;
+        ctx.resultPtrMask = 0x1;
+        detail::pushArgs(ctx, 0, std::forward<TArgs>(args)...);
+        __fxcpp_invoke_native(reinterpret_cast<uint32_t>(&ctx));
         return getStringResult(ctx, 0);
     }
     else if constexpr (std::is_same_v<TResult, bool>)

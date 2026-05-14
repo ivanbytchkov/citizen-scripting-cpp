@@ -173,8 +173,14 @@ static wasm_trap_t* cb_invoke_native(void* env, wasmtime_caller_t* caller, const
     if (rt->host())
         rt->host()->InvokeNative(hostCtx);
     rt->lastNativeCtx() = hostCtx;
+    rt->lastResultPtrMask() = wctx.resultPtrMask;
     for (int i = 0; i < hostCtx.numResults && i < 32; ++i)
-        wctx.args[i] = static_cast<uint64_t>(hostCtx.arguments[i]);
+    {
+        if ((wctx.resultPtrMask >> i) & 1u)
+            wctx.args[i] = (hostCtx.arguments[i] != 0) ? 1 : 0;
+        else
+            wctx.args[i] = static_cast<uint64_t>(hostCtx.arguments[i]);
+    }
     callerMemory(caller, ctx, &base, &sz);
     if (!inBounds(sz, ctxPtr, sizeof(WasmNativeCtx))) return nullptr;
     memcpy(base + ctxPtr, &wctx, sizeof(WasmNativeCtx));
@@ -195,6 +201,11 @@ static wasm_trap_t* cb_copy_string_result(void* env, wasmtime_caller_t* caller, 
     uint32_t bufPtr = static_cast<uint32_t>(args[2].of.i32);
     int32_t bufMax = args[3].of.i32;
     if (resultIdx < 0 || resultIdx >= 32)
+    {
+        results[0] = i32val(0);
+        return nullptr;
+    }
+    if (!((rt->lastResultPtrMask() >> resultIdx) & 1u))
     {
         results[0] = i32val(0);
         return nullptr;
@@ -483,6 +494,7 @@ result_t OM_DECL Runtime::Destroy()
             callVoid(m_fnStop);
         }
         m_refs.clear();
+        m_refToCallbackId.clear();
         destroyWasm();
     }
 #endif
@@ -727,7 +739,7 @@ bool Runtime::callInvokeRef(uint32_t callbackId, const char* argsSerialized, uin
     if (!argsPtr) return false;
     uint8_t* base = wasmBase();
     size_t memSz = wasmMemSize();
-    if (argsPtr + argsSize > memSz) { wasmFree(argsPtr, argsSize > 0 ? argsSize : 1); return false; }
+    if (!inBounds(memSz, argsPtr, argsSize)) { wasmFree(argsPtr, argsSize > 0 ? argsSize : 1); return false; }
     if (argsSize > 0)
         memcpy(base + argsPtr, argsSerialized, argsSize);
     constexpr uint32_t resultBufMax = 4096;
@@ -756,7 +768,7 @@ bool Runtime::callInvokeRef(uint32_t callbackId, const char* argsSerialized, uin
         base = wasmBase();
         memSz = wasmMemSize();
         size_t copyLen = std::min<size_t>(static_cast<size_t>(actualLen), resultBufMax);
-        if (resultPtr + copyLen <= memSz)
+        if (inBounds(memSz, resultPtr, copyLen))
         {
             result.resize(copyLen);
             memcpy(result.data(), base + resultPtr, copyLen);
@@ -913,7 +925,6 @@ result_t Runtime::loadWasm(const std::string& resolvedPath)
         auto* err = wasmtime_linker_define_wasi(m_linker);
         if (err) wasmErrMsg(err, nullptr);
         wasi_config_t* wasi = wasi_config_new();
-        wasi_config_inherit_stderr(wasi);
         auto* werr = wasmtime_context_set_wasi(wasmtime_store_context(m_store), wasi);
         if (werr) wasmErrMsg(werr, nullptr);
     }
@@ -1047,6 +1058,14 @@ result_t OM_DECL Runtime::TriggerEvent(char* eventName, char* argsSerialized, ui
             return FX_S_OK;
         }
         uint8_t* base = wasmBase();
+        size_t memSz = wasmMemSize();
+        if (!inBounds(memSz, nameWasm, name.size() + 1) || !inBounds(memSz, argsWasm, serializedSize) || !inBounds(memSz, srcWasm, src.size() + 1))
+        {
+            wasmFree(nameWasm, static_cast<uint32_t>(name.size()) + 1);
+            wasmFree(argsWasm, serializedSize);
+            wasmFree(srcWasm, static_cast<uint32_t>(src.size()) + 1);
+            return FX_S_OK;
+        }
         memcpy(base + nameWasm, name.data(), name.size());
         base[nameWasm + name.size()] = '\0';
         memcpy(base + argsWasm, argsSerialized, serializedSize);

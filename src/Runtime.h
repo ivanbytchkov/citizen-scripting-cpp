@@ -87,6 +87,7 @@ public:
 #ifdef FXCPP_WASM_SUPPORT
     bool& eventCanceled() { return m_eventCanceled; }
     fxNativeContext& lastNativeCtx() { return m_lastNativeCtx; }
+    uint32_t& lastResultPtrMask() { return m_lastResultPtrMask; }
     uint8_t* wasmBase();
     size_t wasmMemSize();
     uint32_t wasmAlloc(uint32_t size);
@@ -146,6 +147,7 @@ private:
     std::unordered_map<int32_t, int32_t> m_refToCallbackId;
     bool m_eventCanceled = false;
     fxNativeContext m_lastNativeCtx{};
+    uint32_t m_lastResultPtrMask = 0;
     void defineImports();
     bool resolveExports();
     void destroyWasm();
