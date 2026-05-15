@@ -1,11 +1,7 @@
 #pragma once
 
-#include "../include/fxScripting.h"
-#include "../include/core.h"
-#include "Resource.h"
-#include "Coroutine/Coroutine.h"
-#include "Interop/MsgPackSerializer.h"
-#include "Interop/MsgPackDeserializer.h"
+#include "fxScripting.h"
+#include "../src/CppScriptNative.h"
 
 #include <string>
 #include <unordered_map>
@@ -18,7 +14,8 @@
 #include <wasmtime.h>
 #endif
 
-FX_DEFINE_GUID(CLSID_Runtime, 0xF3A7B9, 0x241D, 0x5E4C, 0x8A, 0x93, 0x2F, 0xA1, 0xB2, 0xC3, 0xD4, 0xE5);
+namespace fx::cpp
+{
 
 struct CppBoundary
 {
@@ -59,11 +56,14 @@ struct WasmNativeCtx
 static_assert(sizeof(WasmNativeCtx) == 280, "WasmNativeCtx layout mismatch");
 #endif
 
-class Runtime final : public fx::OMClass<Runtime, IScriptRuntime, IScriptTickRuntime, IScriptEventRuntime, IScriptRefRuntime, IScriptFileHandlingRuntime, IScriptTickRuntimeWithBookmarks, IScriptStackWalkingRuntime, IScriptMemInfoRuntime, IScriptWarningRuntime, IScriptProfiler>
+// {00F3A7B9-241D-5E4C-8A93-2FA1B2C3D4E5}
+FX_DEFINE_GUID(CLSID_CppScriptRuntime, 0xF3A7B9, 0x241D, 0x5E4C, 0x8A, 0x93, 0x2F, 0xA1, 0xB2, 0xC3, 0xD4, 0xE5);
+
+class CppScriptRuntime final : public fx::OMClass<CppScriptRuntime, IScriptRuntime, IScriptTickRuntime, IScriptEventRuntime, IScriptRefRuntime, IScriptFileHandlingRuntime, IScriptTickRuntimeWithBookmarks, IScriptStackWalkingRuntime, IScriptMemInfoRuntime, IScriptWarningRuntime, IScriptProfiler>
 {
 public:
-    Runtime();
-    ~Runtime();
+    CppScriptRuntime();
+    ~CppScriptRuntime();
     result_t OM_DECL Create(IScriptHost* host) override;
     result_t OM_DECL Destroy() override;
     void* OM_DECL GetParentObject() override { return m_parentObject; }
@@ -109,9 +109,12 @@ public:
         Status status = Running;
         std::vector<char> result;
     };
+    static constexpr int32_t MAX_WORKERS_PER_RESOURCE = 8;
     std::unordered_map<int32_t, std::unique_ptr<WorkerState>> m_workers;
     int32_t m_nextWorkerId = 1;
     wasmtime_module_t* wasmModule() const { return m_module; }
+    void scheduleWasmBookmark(int32_t wasmId, int32_t deadlineMs);
+    void refuelWasm();
     static wasm_engine_t* engine();
 #endif
 
@@ -165,6 +168,11 @@ private:
     bool m_eventCanceled = false;
     fxNativeContext m_lastNativeCtx{};
     uint32_t m_lastResultPtrMask = 0;
+    wasmtime_func_t m_fnTickBookmarks{};
+    bool m_hasTickBookmarksFn = false;
+    std::unordered_map<int32_t, uint64_t> m_wasmToHostBookmark;
+    std::unordered_map<uint64_t, int32_t> m_hostToWasmBookmark;
+    uint64_t m_nextWasmHostBookmarkId = 1;
     void defineImports();
     bool resolveExports();
     void destroyWasm();
@@ -172,3 +180,5 @@ private:
     result_t loadWasm(const std::string& resolvedPath);
 #endif
 };
+
+}

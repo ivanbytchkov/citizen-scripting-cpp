@@ -210,7 +210,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--game", choices=GAME_URLS.keys(), default="fivem")
-    parser.add_argument("--output", default="src/Native/DB.h")
+    parser.add_argument("--output", default="src/DB.h")
     args = parser.parse_args()
 
     output_path = args.output
@@ -275,11 +275,7 @@ def main():
     header = f"""// Auto-generated, do not edit.
 #pragma once
 
-#ifdef __wasm__
-#include "../WASM/Natives.h"
-#else
-#include "Native.h"
-#endif
+#include "CppScriptInvoke.h"
 
 namespace fx::natives
 {{

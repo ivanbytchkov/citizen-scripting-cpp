@@ -1,4 +1,5 @@
-#include "Runtime.h"
+#include "../include/CppScriptRuntime.h"
+#include "../include/OMComponent.h"
 
 #include <vector>
 
@@ -24,49 +25,8 @@ extern "C" result_t fxCreateObjectInstance(const guid_t& guid, const guid_t& iid
     return CoreFxCreateObjectInstance(guid, iid, objectRef);
 }
 
-struct OMFactoryDef
-{
-    guid_t guid;
-    fxIBase* (*factory)();
-    OMFactoryDef* next = nullptr;
-    OMFactoryDef(const guid_t& g, fxIBase*(*f)()) : guid(g), factory(f)
-    {
-        next = s_factories;
-        s_factories = this;
-    }
-    static OMFactoryDef* s_factories;
-};
 OMFactoryDef* OMFactoryDef::s_factories = nullptr;
-
-struct OMImplementsDef
-{
-    guid_t iid;
-    guid_t clsid;
-    OMImplementsDef* next = nullptr;
-    OMImplementsDef(const guid_t& c, const guid_t& i) : iid(i), clsid(c)
-    {
-        next = s_impls;
-        s_impls = this;
-    }
-    static OMImplementsDef* s_impls;
-};
 OMImplementsDef* OMImplementsDef::s_impls = nullptr;
-
-static OMFactoryDef s_factory{
-    CLSID_Runtime,
-    []() -> fxIBase* { return fx::MakeNewBase<Runtime>(); }
-};
-
-static OMImplementsDef s_implFile { CLSID_Runtime, IScriptFileHandlingRuntime::GetIID() };
-static OMImplementsDef s_implRuntime { CLSID_Runtime, IScriptRuntime::GetIID() };
-static OMImplementsDef s_implTick { CLSID_Runtime, IScriptTickRuntime::GetIID() };
-static OMImplementsDef s_implEvent { CLSID_Runtime, IScriptEventRuntime::GetIID() };
-static OMImplementsDef s_implRef { CLSID_Runtime, IScriptRefRuntime::GetIID() };
-static OMImplementsDef s_implBookmarks { CLSID_Runtime, IScriptTickRuntimeWithBookmarks::GetIID() };
-static OMImplementsDef s_implStackWalk { CLSID_Runtime, IScriptStackWalkingRuntime::GetIID() };
-static OMImplementsDef s_implMemInfo { CLSID_Runtime, IScriptMemInfoRuntime::GetIID() };
-static OMImplementsDef s_implWarning { CLSID_Runtime, IScriptWarningRuntime::GetIID() };
-static OMImplementsDef s_implProfiler { CLSID_Runtime, IScriptProfiler::GetIID() };
 
 class OMComponent
 {
@@ -90,8 +50,8 @@ public:
 class ComponentInstance final : public Component, public OMComponent
 {
 public:
-    bool Initialize() override { return true ; }
-    bool Shutdown() override { return true ; }
+    bool Initialize() override { return true; }
+    bool Shutdown() override { return true; }
 
     bool IsA(uint32_t type) override
     {

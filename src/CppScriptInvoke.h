@@ -1,10 +1,12 @@
 #pragma once
 
-#include "../Resource.h"
+#ifdef __wasm__
+#include "CppScriptWasm.h"
+#else
+#include "CppScriptNative.h"
+#endif
 
-#include <string>
-#include <cstdint>
-#include <cstring>
+#ifndef __wasm__
 
 namespace fx::natives
 {
@@ -99,10 +101,10 @@ inline TResult invoke(uint64_t hash, TArgs&&... args)
     {
         return invokeRaw(hash, std::forward<TArgs>(args)...) != 0;
     }
-    else if constexpr (std::is_same_v<TResult, Vector3>)
+    else if constexpr (std::is_same_v<TResult, fx::Vector3>)
     {
         auto nctx = invokeCtx(hash, std::forward<TArgs>(args)...);
-        Vector3 v;
+        fx::Vector3 v;
         uint32_t bx = static_cast<uint32_t>(nctx.arguments[0]);
         uint32_t by = static_cast<uint32_t>(nctx.arguments[1]);
         uint32_t bz = static_cast<uint32_t>(nctx.arguments[2]);
@@ -126,3 +128,5 @@ inline TResult invoke(uint64_t hash, TArgs&&... args)
 }
 
 }
+
+#endif
