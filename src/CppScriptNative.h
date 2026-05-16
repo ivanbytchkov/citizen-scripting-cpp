@@ -189,6 +189,10 @@ struct Value
         {
                 return static_cast<int>(asNum(def));
         }
+        float asFloat(float def = 0.f) const
+        {
+                return static_cast<float>(asNum(def));
+        }
         bool asBool(bool def = false) const
         {
                 return kind == Kind::Bool ? scalar == "true" : def;
@@ -917,6 +921,10 @@ class EventArgs
         double number(size_t i) const
         {
                 return m_arr.at(i).asNum();
+        }
+        float floating(size_t i) const
+        {
+                return m_arr.at(i).asFloat();
         }
         bool boolean(size_t i) const
         {
@@ -2095,6 +2103,85 @@ inline void setConvarReplicated(const std::string& name, const std::string& valu
                 ctx->setConvarReplicated(name, value);
 }
 
+inline void setKvp(const std::string& key, const std::string& value)
+{
+        if (auto* ctx = detail::g_ctx)
+                ctx->invokeNative(HashString("SET_RESOURCE_KVP"), reinterpret_cast<uintptr_t>(key.c_str()), reinterpret_cast<uintptr_t>(value.c_str()));
+}
+
+inline void setKvpInt(const std::string& key, int value)
+{
+        if (auto* ctx = detail::g_ctx)
+                ctx->invokeNative(HashString("SET_RESOURCE_KVP_INT"), reinterpret_cast<uintptr_t>(key.c_str()), value);
+}
+
+inline void setKvpFloat(const std::string& key, float value)
+{
+        if (auto* ctx = detail::g_ctx)
+                ctx->invokeNative(HashString("SET_RESOURCE_KVP_FLOAT"), reinterpret_cast<uintptr_t>(key.c_str()), value);
+}
+
+inline std::string getKvpString(const std::string& key)
+{
+        if (!detail::g_ctx)
+                return { };
+        auto ctx = detail::g_ctx->invokeNativeResult(HashString("GET_RESOURCE_KVP_STRING"), reinterpret_cast<uintptr_t>(key.c_str()));
+        const char* r = reinterpret_cast<const char*>(ctx.arguments[0]);
+        return r ? std::string(r) : std::string{ };
+}
+
+inline int getKvpInt(const std::string& key)
+{
+        if (!detail::g_ctx)
+                return 0;
+        auto ctx = detail::g_ctx->invokeNativeResult(HashString("GET_RESOURCE_KVP_INT"), reinterpret_cast<uintptr_t>(key.c_str()));
+        return static_cast<int>(ctx.arguments[0]);
+}
+
+inline float getKvpFloat(const std::string& key)
+{
+        if (!detail::g_ctx)
+                return 0.f;
+        auto ctx = detail::g_ctx->invokeNativeResult(HashString("GET_RESOURCE_KVP_FLOAT"), reinterpret_cast<uintptr_t>(key.c_str()));
+        uint32_t bits = static_cast<uint32_t>(ctx.arguments[0]);
+        float f;
+        memcpy(&f, &bits, sizeof(f));
+        return f;
+}
+
+inline void deleteKvp(const std::string& key)
+{
+        if (auto* ctx = detail::g_ctx)
+                ctx->invokeNative(HashString("DELETE_RESOURCE_KVP"), reinterpret_cast<uintptr_t>(key.c_str()));
+}
+
+inline void flushKvp()
+{
+        if (auto* ctx = detail::g_ctx)
+                ctx->invokeNative(HashString("FLUSH_RESOURCE_KVP"));
+}
+
+inline std::vector<std::string> findKvp(const std::string& prefix)
+{
+        std::vector<std::string> keys;
+        if (!detail::g_ctx)
+                return keys;
+        auto startCtx = detail::g_ctx->invokeNativeResult(HashString("START_FIND_KVP"), reinterpret_cast<uintptr_t>(prefix.c_str()));
+        int handle = static_cast<int>(startCtx.arguments[0]);
+        if (handle == -1)
+                return keys;
+        while (true)
+        {
+                auto findCtx = detail::g_ctx->invokeNativeResult(HashString("FIND_KVP"), handle);
+                const char* r = reinterpret_cast<const char*>(findCtx.arguments[0]);
+                if (!r || r[0] == '\0')
+                        break;
+                keys.push_back(r);
+        }
+        detail::g_ctx->invokeNative(HashString("END_FIND_KVP"), handle);
+        return keys;
+}
+
 }
 
 namespace fx
@@ -2301,8 +2388,12 @@ namespace detail
         }
 }
 
+static constexpr int32_t MAX_WORKERS_PER_RESOURCE = 16;
+
 inline int32_t createWorker(const std::string& fnName, const std::string& input = "", int32_t resultBufferSize = 65536)
 {
+        if (static_cast<int32_t>(detail::workerMap().size()) >= MAX_WORKERS_PER_RESOURCE)
+                return -3;
         void* sym = dlsym(detail::g_libHandle ? detail::g_libHandle : RTLD_DEFAULT, fnName.c_str());
         if (!sym)
                 return -2;

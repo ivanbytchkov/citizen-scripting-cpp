@@ -26,10 +26,12 @@ struct Value
                 Number,
                 String,
                 Array,
+                Object,
                 FuncRef
         } kind = Kind::Null;
         std::string scalar;
         std::vector<Value> children;
+        std::vector<std::string> keys;
         Value() = default;
         Value(Value&&) noexcept = default;
         Value& operator=(Value&&) noexcept = default;
@@ -92,6 +94,21 @@ struct Value
                 static const Value nil;
                 return i < children.size() ? children[i] : nil;
         }
+        bool has(const std::string& key) const
+        {
+                for (size_t i = 0; i < keys.size(); ++i)
+                        if (keys[i] == key)
+                                return true;
+                return false;
+        }
+        const Value& operator[](const std::string& key) const
+        {
+                static const Value nil;
+                for (size_t i = 0; i < keys.size(); ++i)
+                        if (keys[i] == key)
+                                return children[i];
+                return nil;
+        }
 };
 
 struct Reader
@@ -134,14 +151,35 @@ struct Reader
                 p += n;
                 return s;
         }
-        Value skipMap(uint32_t n, int d)
+        Value readMap(uint32_t n, int d)
         {
+                if (n == 1)
+                {
+                        auto key = read(d + 1);
+                        auto val = read(d + 1);
+                        if (key.kind == Value::Kind::String && key.scalar == "__cfx_functionReference")
+                        {
+                                Value v;
+                                v.kind = Value::Kind::FuncRef;
+                                v.scalar = val.asStr();
+                                return v;
+                        }
+                        Value v;
+                        v.kind = Value::Kind::Object;
+                        v.keys.push_back(std::move(key.scalar));
+                        v.children.push_back(std::move(val));
+                        return v;
+                }
+                Value v;
+                v.kind = Value::Kind::Object;
                 for (uint32_t i = 0; i < n; ++i)
                 {
-                        read(d + 1);
-                        read(d + 1);
+                        auto key = read(d + 1);
+                        auto val = read(d + 1);
+                        v.keys.push_back(key.kind == Value::Kind::String ? std::move(key.scalar) : std::to_string(i));
+                        v.children.push_back(std::move(val));
                 }
-                return { };
+                return v;
         }
         Value readExt(uint32_t n)
         {
@@ -189,27 +227,7 @@ struct Reader
                         return v;
                 }
                 if ((b & 0xF0) == 0x80)
-                {
-                        uint32_t n = b & 0x0F;
-                        if (n == 1)
-                        {
-                                auto key = read(d + 1);
-                                auto val = read(d + 1);
-                                if (key.kind == Value::Kind::String && key.scalar == "__cfx_functionReference")
-                                {
-                                        v.kind = Value::Kind::FuncRef;
-                                        v.scalar = val.asStr();
-                                        return v;
-                                }
-                                return { };
-                        }
-                        for (uint32_t i = 0; i < n; ++i)
-                        {
-                                read(d + 1);
-                                read(d + 1);
-                        }
-                        return { };
-                }
+                        return readMap(b & 0x0F, d);
                 switch (b)
                 {
                         case 0xC0:
@@ -338,9 +356,9 @@ struct Reader
                                 return readExt(u32());
                         // map16/map32
                         case 0xDE:
-                                return skipMap(u16(), d);
+                                return readMap(u16(), d);
                         case 0xDF:
-                                return skipMap(u32(), d);
+                                return readMap(u32(), d);
                         default:
                                 return { };
                 }
@@ -517,6 +535,17 @@ struct Writer
                                 for (auto& c : v.children)
                                         encValue(c);
                                 break;
+                        case Value::Kind::Object:
+                                mapHeader(static_cast<uint32_t>(v.keys.size()));
+                                for (size_t i = 0; i < v.keys.size(); ++i)
+                                {
+                                        str(v.keys[i]);
+                                        if (i < v.children.size())
+                                                encValue(v.children[i]);
+                                        else
+                                                encNull();
+                                }
+                                break;
                 }
         }
 };
@@ -561,6 +590,365 @@ inline void ensureArray(Value& v)
 {
         fxw_internal::ensureArray(v);
 }
+
+inline std::string quote(std::string_view s)
+{
+        std::string out;
+        out.reserve(s.size() + 2);
+        out += '"';
+        for (char c : s)
+        {
+                switch (c)
+                {
+                        case '"':
+                                out += "\\\"";
+                                break;
+                        case '\\':
+                                out += "\\\\";
+                                break;
+                        case '\n':
+                                out += "\\n";
+                                break;
+                        case '\r':
+                                out += "\\r";
+                                break;
+                        case '\t':
+                                out += "\\t";
+                                break;
+                        default:
+                                if (static_cast<unsigned char>(c) < 0x20)
+                                {
+                                        char buf[8];
+                                        snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned char>(c));
+                                        out += buf;
+                                }
+                                else
+                                        out += c;
+                }
+        }
+        out += '"';
+        return out;
+}
+
+class JsonObj
+{
+    public:
+        JsonObj& set(std::string_view key, std::string_view value)
+        {
+                append(key, quote(value));
+                return *this;
+        }
+        JsonObj& set(std::string_view key, int64_t value)
+        {
+                append(key, std::to_string(value));
+                return *this;
+        }
+        JsonObj& set(std::string_view key, int value)
+        {
+                return set(key, static_cast<int64_t>(value));
+        }
+        JsonObj& set(std::string_view key, uint32_t v)
+        {
+                return set(key, static_cast<int64_t>(v));
+        }
+        JsonObj& set(std::string_view key, uint64_t v)
+        {
+                return set(key, static_cast<int64_t>(v));
+        }
+        JsonObj& set(std::string_view key, double value)
+        {
+                char buf[32];
+                snprintf(buf, sizeof(buf), "%g", value);
+                append(key, buf);
+                return *this;
+        }
+        JsonObj& set(std::string_view key, bool value)
+        {
+                append(key, value ? "true" : "false");
+                return *this;
+        }
+        JsonObj& setRaw(std::string_view key, std::string_view rawValue)
+        {
+                append(key, std::string(rawValue));
+                return *this;
+        }
+        std::string build() const
+        {
+                return "{" + m_body + "}";
+        }
+
+    private:
+        void append(std::string_view key, const std::string& rawVal)
+        {
+                if (!m_body.empty())
+                        m_body += ',';
+                m_body += quote(key);
+                m_body += ':';
+                m_body += rawVal;
+        }
+        std::string m_body;
+};
+
+namespace detail
+{
+
+        struct Parser
+        {
+                std::string_view src;
+                size_t pos = 0;
+                bool error = false;
+                char peek() const
+                {
+                        return pos < src.size() ? src[pos] : '\0';
+                }
+                char consume()
+                {
+                        return pos < src.size() ? src[pos++] : '\0';
+                }
+                void skipWs()
+                {
+                        while (pos < src.size() && (src[pos] == ' ' || src[pos] == '\t' || src[pos] == '\n' || src[pos] == '\r'))
+                                ++pos;
+                }
+                bool expect(char c)
+                {
+                        skipWs();
+                        if (consume() != c)
+                        {
+                                error = true;
+                                return false;
+                        }
+                        return true;
+                }
+                std::string parseString()
+                {
+                        if (!expect('"'))
+                                return { };
+                        std::string out;
+                        while (pos < src.size())
+                        {
+                                char c = consume();
+                                if (c == '"')
+                                        return out;
+                                if (c == '\\')
+                                {
+                                        char e = consume();
+                                        switch (e)
+                                        {
+                                                case '"':
+                                                        out += '"';
+                                                        break;
+                                                case '\\':
+                                                        out += '\\';
+                                                        break;
+                                                case '/':
+                                                        out += '/';
+                                                        break;
+                                                case 'n':
+                                                        out += '\n';
+                                                        break;
+                                                case 'r':
+                                                        out += '\r';
+                                                        break;
+                                                case 't':
+                                                        out += '\t';
+                                                        break;
+                                                case 'u':
+                                                {
+                                                        unsigned cp = 0;
+                                                        for (int i = 0; i < 4; ++i)
+                                                        {
+                                                                char h = consume();
+                                                                cp <<= 4;
+                                                                if (h >= '0' && h <= '9')
+                                                                        cp |= h - '0';
+                                                                else if (h >= 'a' && h <= 'f')
+                                                                        cp |= h - 'a' + 10;
+                                                                else if (h >= 'A' && h <= 'F')
+                                                                        cp |= h - 'A' + 10;
+                                                        }
+                                                        if (cp < 0x80)
+                                                                out += static_cast<char>(cp);
+                                                        else if (cp < 0x800)
+                                                        {
+                                                                out += static_cast<char>(0xC0 | (cp >> 6));
+                                                                out += static_cast<char>(0x80 | (cp & 0x3F));
+                                                        }
+                                                        else
+                                                        {
+                                                                out += static_cast<char>(0xE0 | (cp >> 12));
+                                                                out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                                                                out += static_cast<char>(0x80 | (cp & 0x3F));
+                                                        }
+                                                        break;
+                                                }
+                                                default:
+                                                        out += e;
+                                        }
+                                }
+                                else
+                                        out += c;
+                        }
+                        error = true;
+                        return out;
+                }
+                static constexpr int MAX_DEPTH = 128;
+                Value parseValue(int depth = 0)
+                {
+                        if (depth > MAX_DEPTH || error)
+                                return { };
+                        skipWs();
+                        Value v;
+                        char c = peek();
+                        if (c == '"')
+                        {
+                                v.kind = Value::Kind::String;
+                                v.scalar = parseString();
+                        }
+                        else if (c == '{')
+                        {
+                                v.kind = Value::Kind::Object;
+                                consume();
+                                skipWs();
+                                if (peek() == '}')
+                                {
+                                        consume();
+                                        return v;
+                                }
+                                while (!error)
+                                {
+                                        skipWs();
+                                        std::string key = parseString();
+                                        if (error)
+                                                break;
+                                        skipWs();
+                                        if (!expect(':'))
+                                                break;
+                                        v.keys.push_back(std::move(key));
+                                        v.children.push_back(parseValue(depth + 1));
+                                        if (error)
+                                                break;
+                                        skipWs();
+                                        char sep = peek();
+                                        if (sep == ',')
+                                                consume();
+                                        else if (sep == '}')
+                                        {
+                                                consume();
+                                                break;
+                                        }
+                                        else
+                                        {
+                                                error = true;
+                                                break;
+                                        }
+                                }
+                        }
+                        else if (c == '[')
+                        {
+                                v.kind = Value::Kind::Array;
+                                consume();
+                                skipWs();
+                                if (peek() == ']')
+                                {
+                                        consume();
+                                        return v;
+                                }
+                                while (!error)
+                                {
+                                        v.children.push_back(parseValue(depth + 1));
+                                        if (error)
+                                                break;
+                                        skipWs();
+                                        char sep = peek();
+                                        if (sep == ',')
+                                                consume();
+                                        else if (sep == ']')
+                                        {
+                                                consume();
+                                                break;
+                                        }
+                                        else
+                                        {
+                                                error = true;
+                                                break;
+                                        }
+                                }
+                        }
+                        else if (c == 't')
+                        {
+                                if (pos + 4 > src.size() || src.compare(pos, 4, "true") != 0)
+                                {
+                                        error = true;
+                                        return { };
+                                }
+                                v.kind = Value::Kind::Bool;
+                                v.scalar = "true";
+                                pos += 4;
+                        }
+                        else if (c == 'f')
+                        {
+                                if (pos + 5 > src.size() || src.compare(pos, 5, "false") != 0)
+                                {
+                                        error = true;
+                                        return { };
+                                }
+                                v.kind = Value::Kind::Bool;
+                                v.scalar = "false";
+                                pos += 5;
+                        }
+                        else if (c == 'n')
+                        {
+                                if (pos + 4 > src.size() || src.compare(pos, 4, "null") != 0)
+                                {
+                                        error = true;
+                                        return { };
+                                }
+                                v.kind = Value::Kind::Null;
+                                pos += 4;
+                        }
+                        else
+                        {
+                                v.kind = Value::Kind::Number;
+                                size_t start = pos;
+                                if (peek() == '-')
+                                        ++pos;
+                                while (pos < src.size() && (src[pos] >= '0' && src[pos] <= '9'))
+                                        ++pos;
+                                if (pos < src.size() && src[pos] == '.')
+                                {
+                                        ++pos;
+                                        while (pos < src.size() && (src[pos] >= '0' && src[pos] <= '9'))
+                                                ++pos;
+                                }
+                                if (pos < src.size() && (src[pos] == 'e' || src[pos] == 'E'))
+                                {
+                                        ++pos;
+                                        if (pos < src.size() && (src[pos] == '+' || src[pos] == '-'))
+                                                ++pos;
+                                        while (pos < src.size() && (src[pos] >= '0' && src[pos] <= '9'))
+                                                ++pos;
+                                }
+                                if (pos == start)
+                                {
+                                        error = true;
+                                        return { };
+                                }
+                                v.scalar = std::string(src.data() + start, pos - start);
+                        }
+                        return v;
+                }
+        };
+
+}
+
+inline Value parse(std::string_view json)
+{
+        detail::Parser p{ json, 0, false };
+        auto v = p.parseValue();
+        return p.error ? Value{ } : v;
+}
+
 }
 
 namespace fx
