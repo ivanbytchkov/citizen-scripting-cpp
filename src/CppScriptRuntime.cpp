@@ -492,6 +492,11 @@ static wasm_trap_t* CbCanonicalizeRef(void* env, wasmtime_caller_t* caller, cons
         int32_t refIdx = args[0].of.i32;
         uint32_t bufPtr = ArgU32(args[1]);
         int32_t bufMax = args[2].of.i32;
+        if (!rt->host())
+        {
+                results[0] = I32Val(0);
+                return nullptr;
+        }
         char* refString = nullptr;
         rt->host()->CanonicalizeRef(refIdx, rt->GetInstanceId(), &refString);
         if (!refString)
@@ -614,9 +619,9 @@ static wasm_trap_t* CbSpawnProcess(void* env, wasmtime_caller_t* caller, const w
         }
         std::string cmd(reinterpret_cast<const char*>(mem.base + cmdPtr), cmdLen);
         fx::ProcessResult pr = fx::spawnProcess(cmd);
-        if (pr.status == -2)
+        if (pr.status == -2 || pr.status == -3)
         {
-                results[0] = I32Val(-2);
+                results[0] = I32Val(pr.status);
                 return nullptr;
         }
         mem.init(caller);
@@ -720,7 +725,21 @@ static wasm_trap_t* CbCreateWorker(void* env, wasmtime_caller_t* caller, const w
         }
         std::string fnName(reinterpret_cast<const char*>(mem.base + fnPtr), fnLen);
         std::vector<char> inputData(mem.base + inPtr, mem.base + inPtr + inLen);
-        int32_t workerId = rt->m_nextWorkerId++;
+        int32_t workerId = rt->m_nextWorkerId;
+        int32_t startId = workerId;
+        while (rt->m_workers.count(workerId))
+        {
+                if (++workerId <= 0)
+                        workerId = 1;
+                if (workerId == startId)
+                {
+                        results[0] = I32Val(-3);
+                        return nullptr;
+                }
+        }
+        rt->m_nextWorkerId = workerId + 1;
+        if (rt->m_nextWorkerId <= 0)
+                rt->m_nextWorkerId = 1;
         auto state = std::make_shared<CppScriptRuntime::WorkerState>();
         rt->m_workers[workerId] = state;
         wasmtime_module_t* mod = rt->wasmModule();
@@ -747,6 +766,10 @@ static wasm_trap_t* CbCreateWorker(void* env, wasmtime_caller_t* caller, const w
                 auto* err = wasmtime_linker_instantiate(linker, wasmtime_store_context(store), mod, &instance, &trap);
                 if (err || trap)
                 {
+                        if (err)
+                                wasmtime_error_delete(err);
+                        if (trap)
+                                wasm_trap_delete(trap);
                         std::lock_guard<std::mutex> lk(state->mutex);
                         state->status = CppScriptRuntime::WorkerState::Error;
                         wasmtime_linker_delete(linker);

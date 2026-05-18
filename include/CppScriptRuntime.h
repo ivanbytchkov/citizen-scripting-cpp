@@ -1646,7 +1646,18 @@ inline int32_t on(const std::string& event, F&& handler)
         if (auto* c = fxw_internal::currentContext())
         {
                 bool first = c->events.find(event) == c->events.end() || c->events[event].empty();
-                int32_t token = c->nextEventHandlerId++;
+                int32_t token = c->nextEventHandlerId;
+                int32_t start = token;
+                while (c->handlerEventMap.count(token))
+                {
+                        if (++token <= 0)
+                                token = 1;
+                        if (token == start)
+                                return -1;
+                }
+                c->nextEventHandlerId = token + 1;
+                if (c->nextEventHandlerId <= 0)
+                        c->nextEventHandlerId = 1;
                 c->events[event].push_back({ token, std::move(h) });
                 c->handlerEventMap[token] = event;
                 if (first)
