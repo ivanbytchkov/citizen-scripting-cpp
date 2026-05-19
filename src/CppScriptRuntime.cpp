@@ -72,7 +72,7 @@ static void Log(LogLevel level, const char* fmt, ...)
 #define LogError(...) Log(LogLevel::Error, __VA_ARGS__)
 #define LogWarning(...) Log(LogLevel::Warning, __VA_ARGS__)
 
-static bool ValidateScriptPath(const char* scriptFile, const std::string& root, std::string& resolvedPath, std::string& resolvedRoot, const char* resourceName)
+static bool ValidateScriptPath(const char* scriptFile, const std::string& root, std::string& resolvedPath, std::string& resolvedRoot)
 {
         std::string_view scriptFileView(scriptFile);
         if (scriptFileView.find("/..") != std::string_view::npos || scriptFileView.find("../") != std::string_view::npos || scriptFileView == "..")
@@ -113,15 +113,19 @@ static wasmtime_val_t I32Val(int32_t v)
         return r;
 }
 
+static constexpr size_t MAX_FUNC_TYPE_PARAMS = 16;
+
 static wasm_functype_t* MakeFuncType(std::initializer_list<wasm_valkind_t> params, std::initializer_list<wasm_valkind_t> results)
 {
-        wasm_valtype_t* pv[8];
-        wasm_valtype_t* rv[8];
+        wasm_valtype_t* pv[MAX_FUNC_TYPE_PARAMS];
+        wasm_valtype_t* rv[MAX_FUNC_TYPE_PARAMS];
         size_t pi = 0, ri = 0;
         for (auto k : params)
-                pv[pi++] = wasm_valtype_new(k);
+                if (pi < MAX_FUNC_TYPE_PARAMS)
+                        pv[pi++] = wasm_valtype_new(k);
         for (auto k : results)
-                rv[ri++] = wasm_valtype_new(k);
+                if (ri < MAX_FUNC_TYPE_PARAMS)
+                        rv[ri++] = wasm_valtype_new(k);
         wasm_valtype_vec_t p_vec{ }, r_vec{ };
         wasm_valtype_vec_new(&p_vec, pi, pv);
         wasm_valtype_vec_new(&r_vec, ri, rv);
@@ -202,17 +206,43 @@ static void SanitizeTraceMsg(std::string& msg)
                         {
                                 unsigned char c1 = static_cast<unsigned char>(msg[i + 1]);
                                 unsigned char c2 = static_cast<unsigned char>(msg[i + 2]);
+                                // U+200B-200F
                                 if (c1 == 0x80 && (c2 >= 0x8B && c2 <= 0x8F))
                                 {
                                         i += 2;
                                         continue;
                                 }
+                                // U+2028-2029
+                                if (c1 == 0x80 && (c2 == 0xA8 || c2 == 0xA9))
+                                {
+                                        i += 2;
+                                        continue;
+                                }
+                                // U+202A-202E
                                 if (c1 == 0x80 && (c2 >= 0xAA && c2 <= 0xAE))
                                 {
                                         i += 2;
                                         continue;
                                 }
+                                // U+2060-2064
+                                if (c1 == 0x81 && (c2 >= 0xA0 && c2 <= 0xA4))
+                                {
+                                        i += 2;
+                                        continue;
+                                }
+                                // U+2066-2069
                                 if (c1 == 0x81 && (c2 >= 0xA6 && c2 <= 0xA9))
+                                {
+                                        i += 2;
+                                        continue;
+                                }
+                        }
+                        // U+FEFF
+                        if (c == 0xEF && i + 2 < msg.size())
+                        {
+                                unsigned char c1 = static_cast<unsigned char>(msg[i + 1]);
+                                unsigned char c2 = static_cast<unsigned char>(msg[i + 2]);
+                                if (c1 == 0xBB && c2 == 0xBF)
                                 {
                                         i += 2;
                                         continue;
@@ -258,9 +288,13 @@ static wasm_trap_t* CbInvokeNative(void* env, wasmtime_caller_t* caller, const w
         memcpy(&wctx, mem.base + ctxPtr, sizeof(WasmNativeCtx));
         fxNativeContext hostCtx{ };
         hostCtx.nativeIdentifier = wctx.hash;
+        if (wctx.numArgs > 32)
+                wctx.numArgs = 32;
+        if (wctx.numResults > 32)
+                wctx.numResults = 32;
         hostCtx.numArguments = static_cast<int>(wctx.numArgs);
         hostCtx.numResults = static_cast<int>(wctx.numResults);
-        for (uint32_t i = 0; i < wctx.numArgs && i < 32; ++i)
+        for (uint32_t i = 0; i < wctx.numArgs; ++i)
         {
                 if ((wctx.ptrMask >> i) & 1u)
                 {
@@ -282,7 +316,7 @@ static wasm_trap_t* CbInvokeNative(void* env, wasmtime_caller_t* caller, const w
         rt->m_lastNativeCtx = hostCtx;
         rt->m_lastResultPtrMask = wctx.resultPtrMask;
         rt->m_hasValidNativeResult = true;
-        for (int i = 0; i < hostCtx.numResults && i < 32; ++i)
+        for (int i = 0; i < hostCtx.numResults; ++i)
         {
                 if ((wctx.resultPtrMask >> i) & 1u)
                         wctx.args[i] = (hostCtx.arguments[i] != 0) ? 1 : 0;
@@ -438,14 +472,14 @@ static wasm_trap_t* CbGetResourceMetadata(void* env, wasmtime_caller_t* caller, 
                 if (FX_SUCCEEDED(md->GetResourceMetaData(const_cast<char*>(key.c_str()), index, &val)) && val)
                         value = val;
         }
-        int32_t actualLen = static_cast<int32_t>(value.size());
-        if (bufMax > 0 && mem.check(bufPtr, static_cast<size_t>(std::min<int32_t>(bufMax, actualLen < INT32_MAX ? actualLen + 1 : INT32_MAX))))
+        size_t valueLen = value.size();
+        if (bufMax > 0 && mem.check(bufPtr, static_cast<size_t>(bufMax)))
         {
-                size_t copy = std::min<size_t>(value.size(), static_cast<size_t>(bufMax) - 1);
+                size_t copy = std::min<size_t>(valueLen, static_cast<size_t>(bufMax) - 1);
                 memcpy(mem.base + bufPtr, value.data(), copy);
                 mem.base[bufPtr + copy] = '\0';
         }
-        results[0] = I32Val(actualLen);
+        results[0] = I32Val(static_cast<int32_t>(std::min<size_t>(valueLen, INT32_MAX)));
         return nullptr;
 }
 
@@ -791,7 +825,8 @@ static wasm_trap_t* CbCreateWorker(void* env, wasmtime_caller_t* caller, const w
                 wasmtime_context_set_fuel(wasmtime_store_context(store), WASM_FUEL_AMOUNT);
                 auto* linker = wasmtime_linker_new(eng);
                 wasmtime_linker_allow_shadowing(linker, true);
-                wasmtime_linker_define_wasi(linker);
+                if (auto* wasi_err = wasmtime_linker_define_wasi(linker))
+                        wasmtime_error_delete(wasi_err);
                 wasi_config_t* wasi = wasi_config_new();
                 wasmtime_context_set_wasi(wasmtime_store_context(store), wasi);
                 for (const auto& imp : g_imports)
@@ -1008,6 +1043,7 @@ result_t OM_DECL CppScriptRuntime::Destroy()
         if (m_hasStopFn)
         {
                 fx::PushEnvironment env(static_cast<IScriptRuntime*>(this));
+                refuelWasm();
                 callVoid(m_fnStop);
         }
         m_refs.clear();
@@ -1160,7 +1196,7 @@ bool CppScriptRuntime::callInvokeRef(uint32_t callbackId, const char* argsSerial
         }
         if (argsSize > 0)
                 memcpy(base + argsPtr, argsSerialized, argsSize);
-        constexpr uint32_t resultBufMax = 4096;
+        constexpr uint32_t resultBufMax = WORKER_RESULT_BUF_SIZE;
         uint32_t resultPtr = wasmAlloc(resultBufMax);
         if (!resultPtr)
         {
@@ -1631,7 +1667,7 @@ result_t OM_DECL CppScriptRuntime::LoadFile(char* scriptFile)
                 }
         }
         std::string resolvedPath, resolvedRoot;
-        if (!ValidateScriptPath(scriptFile, root, resolvedPath, resolvedRoot, m_resourceName.c_str()))
+        if (!ValidateScriptPath(scriptFile, root, resolvedPath, resolvedRoot))
                 return FX_E_INVALIDARG;
         std::string_view file(scriptFile);
         if (file.ends_with(".wasm"))
