@@ -8,17 +8,19 @@
 #include <climits>
 #include <vector>
 
+#include <atomic>
 #include <cstdarg>
 #include <unistd.h>
 
 using namespace fx::cpp;
+
+static std::atomic<uint32_t> s_nextInstanceId{ 1 };
 
 static constexpr int64_t WASM_MEMORY_LIMIT = 256 * 1024 * 1024;
 static constexpr uint64_t WASM_FUEL_AMOUNT = 1000000000ULL;
 static constexpr uint32_t WORKER_RESULT_BUF_SIZE = 65536;
 static constexpr int WORKER_SHUTDOWN_ATTEMPTS = 50;
 static constexpr int WORKER_SHUTDOWN_INTERVAL_MS = 100;
-
 
 static std::string GetResourcePath(IScriptHost* host)
 {
@@ -53,27 +55,21 @@ static std::string GetConvar(IScriptHost* host, const char* name, const char* de
         return result ? std::string(result) : std::string(defaultValue);
 }
 
-__attribute__((format(printf, 1, 2)))
-static void LogError(const char* fmt, ...)
+enum class LogLevel { Warning, Error };
+
+__attribute__((format(printf, 2, 3)))
+static void Log(LogLevel level, const char* fmt, ...)
 {
         va_list ap;
         va_start(ap, fmt);
-        fprintf(stderr, "\033[31m[citizen-scripting-cpp]\033[0m ");
+        fprintf(stderr, "%s[citizen-scripting-cpp]\033[0m ", level == LogLevel::Error ? "\033[31m" : "\033[33m");
         vfprintf(stderr, fmt, ap);
         fputc('\n', stderr);
         va_end(ap);
 }
 
-__attribute__((format(printf, 1, 2)))
-static void LogWarning(const char* fmt, ...)
-{
-        va_list ap;
-        va_start(ap, fmt);
-        fprintf(stderr, "\033[33m[citizen-scripting-cpp]\033[0m ");
-        vfprintf(stderr, fmt, ap);
-        fputc('\n', stderr);
-        va_end(ap);
-}
+#define LogError(...) Log(LogLevel::Error, __VA_ARGS__)
+#define LogWarning(...) Log(LogLevel::Warning, __VA_ARGS__)
 
 static bool ValidateScriptPath(const char* scriptFile, const std::string& root, std::string& resolvedPath, std::string& resolvedRoot, const char* resourceName)
 {
@@ -289,7 +285,8 @@ static wasm_trap_t* CbCopyStringResult(void* env, wasmtime_caller_t* caller, con
                 results[0] = I32Val(0);
                 return nullptr;
         }
-        size_t len = strlen(str);
+        static constexpr size_t MAX_STRING_RESULT = 1u << 20;
+        size_t len = strnlen(str, MAX_STRING_RESULT);
         size_t copy = (bufMax > 1) ? std::min<size_t>(len, static_cast<size_t>(bufMax) - 1) : 0;
         if (copy && mem.check(bufPtr, copy + 1))
         {
@@ -907,8 +904,12 @@ static wasm_trap_t* CbScheduleBookmark(void* env, wasmtime_caller_t*, const wasm
         return nullptr;
 }
 
-CppScriptRuntime::CppScriptRuntime() : m_instanceId(static_cast<int32_t>(reinterpret_cast<intptr_t>(this) & 0x7FFFFFFF))
+CppScriptRuntime::CppScriptRuntime()
 {
+        uint32_t raw = s_nextInstanceId.fetch_add(1, std::memory_order_relaxed);
+        m_instanceId = static_cast<int32_t>(raw & 0x7FFFFFFFu);
+        if (m_instanceId == 0)
+                m_instanceId = static_cast<int32_t>(s_nextInstanceId.fetch_add(1, std::memory_order_relaxed) & 0x7FFFFFFFu);
 }
 
 CppScriptRuntime::~CppScriptRuntime()
@@ -1291,33 +1292,8 @@ void CppScriptRuntime::destroyWasm()
         m_hasTickBookmarksFn = false;
 }
 
-result_t CppScriptRuntime::loadWasm(const std::string& resolvedPath)
+result_t CppScriptRuntime::loadWasm(const std::vector<uint8_t>& wasmBytes, const std::string& sourcePath)
 {
-        std::vector<uint8_t> wasmBytes;
-        {
-                FILE* f = fopen(resolvedPath.c_str(), "rb");
-                if (!f)
-                {
-                        LogError("Cannot open '%s'", resolvedPath.c_str());
-                        return FX_E_INVALIDARG;
-                }
-                fseek(f, 0, SEEK_END);
-                long sz = ftell(f);
-                fseek(f, 0, SEEK_SET);
-                if (sz <= 0)
-                {
-                        fclose(f);
-                        return FX_E_INVALIDARG;
-                }
-                wasmBytes.resize(static_cast<size_t>(sz));
-                if (fread(wasmBytes.data(), 1, wasmBytes.size(), f) != wasmBytes.size())
-                {
-                        fclose(f);
-                        LogError("Failed to read '%s'", resolvedPath.c_str());
-                        return FX_E_INVALIDARG;
-                }
-                fclose(f);
-        }
         m_store = wasmtime_store_new(engine(), this, nullptr);
         wasmtime_store_limiter(m_store, WASM_MEMORY_LIMIT, -1, -1, -1, -1);
         m_linker = wasmtime_linker_new(engine());
@@ -1325,18 +1301,19 @@ result_t CppScriptRuntime::loadWasm(const std::string& resolvedPath)
         {
                 auto* err = wasmtime_linker_define_wasi(m_linker);
                 if (err)
-                        wasmErrMsg(err, nullptr);
+                        LogWarning("WASI linker error in '%s': %s", m_resourceName.c_str(), wasmErrMsg(err, nullptr).c_str());
                 wasi_config_t* wasi = wasi_config_new();
                 auto* werr = wasmtime_context_set_wasi(wasmtime_store_context(m_store), wasi);
                 if (werr)
-                        wasmErrMsg(werr, nullptr);
+                        LogWarning("WASI context error in '%s': %s", m_resourceName.c_str(), wasmErrMsg(werr, nullptr).c_str());
         }
         defineImports();
+        wasmtime_context_set_fuel(wasmtime_store_context(m_store), WASM_FUEL_AMOUNT);
         {
                 wasmtime_error_t* err = wasmtime_module_new(engine(), wasmBytes.data(), wasmBytes.size(), &m_module);
                 if (err)
                 {
-                        LogError("Compile error in '%s': %s", resolvedPath.c_str(), wasmErrMsg(err, nullptr).c_str());
+                        LogError("Compile error in '%s': %s", sourcePath.c_str(), wasmErrMsg(err, nullptr).c_str());
                         destroyWasm();
                         return FX_E_INVALIDARG;
                 }
@@ -1346,7 +1323,7 @@ result_t CppScriptRuntime::loadWasm(const std::string& resolvedPath)
                 auto* err = wasmtime_linker_instantiate(m_linker, wasmtime_store_context(m_store), m_module, &m_instance, &trap);
                 if (err || trap)
                 {
-                        LogError("Instantiate error in '%s': %s", resolvedPath.c_str(), wasmErrMsg(err, trap).c_str());
+                        LogError("Instantiate error in '%s': %s", sourcePath.c_str(), wasmErrMsg(err, trap).c_str());
                         destroyWasm();
                         return FX_E_INVALIDARG;
                 }
@@ -1370,7 +1347,7 @@ result_t CppScriptRuntime::loadWasm(const std::string& resolvedPath)
         }
         {
                 char buf[512];
-                snprintf(buf, sizeof(buf), "WebAssembly '%s' loaded into the C++ runtime (beta: expect crashes and breaking changes).", m_resourceName.c_str());
+                snprintf(buf, sizeof(buf), "Warning: WebAssembly '%s' has been loaded into the c++ rt. This runtime is still in beta and shouldn't be used in production, crashes and breaking changes are to be expected.", m_resourceName.c_str());
                 if (m_host.GetRef())
                         m_host->ScriptTrace(buf);
                 LogWarning("%s", buf);
@@ -1584,7 +1561,34 @@ result_t OM_DECL CppScriptRuntime::LoadFile(char* scriptFile)
                 return FX_E_INVALIDARG;
         std::string_view file(scriptFile);
         if (file.ends_with(".wasm"))
-                return loadWasm(resolvedPath);
+        {
+                std::vector<uint8_t> wasmBytes;
+                {
+                        FILE* f = fopen(resolvedPath.c_str(), "rb");
+                        if (!f)
+                        {
+                                LogError("Cannot open '%s'", resolvedPath.c_str());
+                                return FX_E_INVALIDARG;
+                        }
+                        fseek(f, 0, SEEK_END);
+                        long sz = ftell(f);
+                        fseek(f, 0, SEEK_SET);
+                        if (sz <= 0)
+                        {
+                                fclose(f);
+                                return FX_E_INVALIDARG;
+                        }
+                        wasmBytes.resize(static_cast<size_t>(sz));
+                        if (fread(wasmBytes.data(), 1, wasmBytes.size(), f) != wasmBytes.size())
+                        {
+                                fclose(f);
+                                LogError("Failed to read '%s'", resolvedPath.c_str());
+                                return FX_E_INVALIDARG;
+                        }
+                        fclose(f);
+                }
+                return loadWasm(wasmBytes, resolvedPath);
+        }
         LogError("Unsupported file type for '%s' in resource '%s'", scriptFile, m_resourceName.c_str());
         return FX_E_INVALIDARG;
 }
@@ -1598,11 +1602,27 @@ result_t OM_DECL CppScriptRuntime::WalkStack(char*, uint32_t, char*, uint32_t, I
         {
                 uint32_t n = static_cast<uint32_t>(s.size());
                 if (n <= 31)
+                {
                         frame.push_back(0xA0 | static_cast<uint8_t>(n));
-                else
+                }
+                else if (n <= 255)
                 {
                         frame.push_back(0xD9);
                         frame.push_back(static_cast<uint8_t>(n));
+                }
+                else if (n <= 65535)
+                {
+                        frame.push_back(0xDA);
+                        frame.push_back(static_cast<uint8_t>(n >> 8));
+                        frame.push_back(static_cast<uint8_t>(n & 0xFF));
+                }
+                else
+                {
+                        frame.push_back(0xDB);
+                        frame.push_back(static_cast<uint8_t>((n >> 24) & 0xFF));
+                        frame.push_back(static_cast<uint8_t>((n >> 16) & 0xFF));
+                        frame.push_back(static_cast<uint8_t>((n >> 8) & 0xFF));
+                        frame.push_back(static_cast<uint8_t>(n & 0xFF));
                 }
                 frame.insert(frame.end(), s.begin(), s.end());
         };

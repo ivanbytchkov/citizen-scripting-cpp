@@ -113,63 +113,6 @@ class fwRefCountable
         }
 };
 
-template<class T>
-class fwRefContainer
-{
-        T* m_ref = nullptr;
-
-    public:
-        fwRefContainer() = default;
-        fwRefContainer(T* ref) : m_ref(ref)
-        {
-                if (m_ref)
-                        m_ref->AddRef();
-        }
-        fwRefContainer(const fwRefContainer& o) : m_ref(o.m_ref)
-        {
-                if (m_ref)
-                        m_ref->AddRef();
-        }
-        fwRefContainer(fwRefContainer&& o) noexcept : m_ref(o.m_ref)
-        {
-                o.m_ref = nullptr;
-        }
-        ~fwRefContainer()
-        {
-                if (m_ref)
-                        m_ref->Release();
-        }
-        fwRefContainer& operator=(const fwRefContainer& o)
-        {
-                if (o.m_ref)
-                        o.m_ref->AddRef();
-                if (m_ref)
-                        m_ref->Release();
-                m_ref = o.m_ref;
-                return *this;
-        }
-        fwRefContainer& operator=(fwRefContainer&& o) noexcept
-        {
-                if (m_ref)
-                        m_ref->Release();
-                m_ref = o.m_ref;
-                o.m_ref = nullptr;
-                return *this;
-        }
-        T* GetRef() const
-        {
-                return m_ref;
-        }
-        T* operator->() const
-        {
-                return m_ref;
-        }
-        explicit operator bool() const
-        {
-                return m_ref != nullptr;
-        }
-};
-
 struct fxNativeContext
 {
         uintptr_t arguments[32];
@@ -221,10 +164,13 @@ class OMPtr
         }
         OMPtr& operator=(OMPtr&& o) noexcept
         {
-                if (m_ref)
-                        m_ref->Release();
-                m_ref = o.m_ref;
-                o.m_ref = nullptr;
+                if (this != &o)
+                {
+                        if (m_ref)
+                                m_ref->Release();
+                        m_ref = o.m_ref;
+                        o.m_ref = nullptr;
+                }
                 return *this;
         }
         T* GetRef() const
@@ -567,6 +513,12 @@ inline ProcessResult spawnProcess(const std::string& command, size_t maxOutputBy
                 return result;
         }
         result.status = static_cast<int32_t>(result.output.size());
+        if (WIFEXITED(wstatus))
+                result.exitCode = WEXITSTATUS(wstatus);
+        else if (WIFSIGNALED(wstatus))
+                result.exitCode = 128 + WTERMSIG(wstatus);
+        else
+                result.exitCode = -1;
         return result;
 }
 

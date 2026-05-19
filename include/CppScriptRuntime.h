@@ -27,6 +27,7 @@ namespace fx
 struct ProcessResult
 {
         int32_t status; // bytes written on success, -1 permission denied, -2 error, -3 timeout
+        int32_t exitCode = 0;
         std::string output;
 };
 
@@ -182,6 +183,7 @@ struct Value
 
 struct Reader
 {
+        static constexpr uint32_t MAX_CONTAINER_ELEMENTS = 65536;
         const uint8_t* p;
         const uint8_t* end;
         bool error = false;
@@ -222,6 +224,11 @@ struct Reader
         }
         Value readMap(uint32_t n, int d)
         {
+                if (n > MAX_CONTAINER_ELEMENTS)
+                {
+                        error = true;
+                        return { };
+                }
                 if (n == 1)
                 {
                         auto key = read(d + 1);
@@ -386,10 +393,18 @@ struct Reader
                                         v.children.push_back(read(d + 1));
                                 return v;
                         case 0xDD:
+                        {
+                                uint32_t n = u32();
+                                if (n > MAX_CONTAINER_ELEMENTS)
+                                {
+                                        error = true;
+                                        return { };
+                                }
                                 v.kind = Value::Kind::Array;
-                                for (uint32_t i = 0, n = u32(); i < n; ++i)
+                                for (uint32_t i = 0; i < n; ++i)
                                         v.children.push_back(read(d + 1));
                                 return v;
+                        }
                         // ext8/ext16/ext32
                         case 0xC7:
                                 return readExt(u8());
@@ -2627,20 +2642,18 @@ struct CppBoundary
 class BoundaryGuard
 {
         IScriptHost* m_host;
+        CppBoundary m_boundary;
 
     public:
-        BoundaryGuard(IScriptHost* host, int64_t hint) : m_host(host)
+        BoundaryGuard(IScriptHost* host, int64_t hint) : m_host(host), m_boundary{ hint }
         {
                 if (m_host)
-                {
-                        CppBoundary b{ hint };
-                        m_host->SubmitBoundaryStart(reinterpret_cast<char*>(&b), sizeof(b));
-                }
+                        m_host->SubmitBoundaryStart(reinterpret_cast<char*>(&m_boundary), sizeof(m_boundary));
         }
         ~BoundaryGuard()
         {
                 if (m_host)
-                        m_host->SubmitBoundaryEnd(nullptr, 0);
+                        m_host->SubmitBoundaryEnd(reinterpret_cast<char*>(&m_boundary), sizeof(m_boundary));
         }
         BoundaryGuard(const BoundaryGuard&) = delete;
         BoundaryGuard& operator=(const BoundaryGuard&) = delete;
@@ -2787,7 +2800,7 @@ public:
         bool resolveExports();
         void destroyWasm();
         std::string wasmErrMsg(wasmtime_error_t* err, wasm_trap_t* trap);
-        result_t loadWasm(const std::string& resolvedPath);
+        result_t loadWasm(const std::vector<uint8_t>& wasmBytes, const std::string& sourcePath);
 };
 
 }
