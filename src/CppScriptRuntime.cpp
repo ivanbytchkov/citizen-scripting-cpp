@@ -617,6 +617,7 @@ static wasm_trap_t* CbSpawnProcess(void* env, wasmtime_caller_t* caller, const w
         }
         std::string cmd(reinterpret_cast<const char*>(mem.base + cmdPtr), cmdLen);
         fx::ProcessResult pr = fx::spawnProcess(cmd);
+        rt->m_lastSpawnExitCode = pr.exitCode;
         if (pr.status == -2 || pr.status == -3)
         {
                 results[0] = I32Val(pr.status);
@@ -636,6 +637,12 @@ static wasm_trap_t* CbSpawnProcess(void* env, wasmtime_caller_t* caller, const w
                 LogError("spawn_process: output buffer out of bounds");
         }
         results[0] = I32Val(written);
+        return nullptr;
+}
+
+static wasm_trap_t* CbGetLastSpawnExitCode(void* env, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t* results, size_t)
+{
+        results[0] = I32Val(static_cast<CppScriptRuntime*>(env)->m_lastSpawnExitCode);
         return nullptr;
 }
 
@@ -667,6 +674,7 @@ static const ImportDesc g_imports[] = {
         { "invoke_function_reference", { WASM_I32, WASM_I32, WASM_I32, WASM_I32, WASM_I32 }, { }, CbInvokeFunctionReference },
         { "get_instance_id", { }, { WASM_I32 }, CbGetInstanceId },
         { "spawn_process", { WASM_I32, WASM_I32, WASM_I32, WASM_I32 }, { WASM_I32 }, CbSpawnProcess },
+        { "get_last_spawn_exit_code", { }, { WASM_I32 }, CbGetLastSpawnExitCode },
         { "create_worker", { WASM_I32, WASM_I32, WASM_I32, WASM_I32 }, { WASM_I32 }, CbCreateWorker },
         { "poll_worker", { WASM_I32, WASM_I32, WASM_I32 }, { WASM_I32 }, CbPollWorker },
         { "schedule_bookmark", { WASM_I32, WASM_I32 }, { }, CbScheduleBookmark },
@@ -1125,7 +1133,6 @@ bool CppScriptRuntime::callInvokeRef(uint32_t callbackId, const char* argsSerial
                 wasmFree(resultPtr, resultBufMax);
                 return false;
         }
-        wasmFree(argsPtr, argsAllocSz);
         int32_t actualLen = ret.of.i32;
         if (actualLen > 0)
         {
@@ -1136,25 +1143,28 @@ bool CppScriptRuntime::callInvokeRef(uint32_t callbackId, const char* argsSerial
                         resultPtr = wasmAlloc(copyLen);
                         if (!resultPtr)
                         {
+                                wasmFree(argsPtr, argsAllocSz);
                                 result = std::vector<char>{ static_cast<char>(MSGPACK_EMPTY_ARRAY) };
                                 return true;
                         }
                         wasmtime_val_t a2[5] = {
                                 I32Val(static_cast<int32_t>(callbackId)),
-                                I32Val(0),
-                                I32Val(0),
+                                I32Val(static_cast<int32_t>(argsPtr)),
+                                I32Val(static_cast<int32_t>(argsSize)),
                                 I32Val(static_cast<int32_t>(resultPtr)),
                                 I32Val(static_cast<int32_t>(copyLen)),
                         };
                         wasmtime_val_t ret2{ };
                         if (!WasmCall(m_store, m_fnInvokeRef, a2, 5, &ret2, 1, m_resourceName.c_str(), "invoke_ref retry"))
                         {
+                                wasmFree(argsPtr, argsAllocSz);
                                 wasmFree(resultPtr, copyLen);
                                 result = std::vector<char>{ static_cast<char>(MSGPACK_EMPTY_ARRAY) };
                                 return true;
                         }
                         copyLen = std::min(copyLen, static_cast<uint32_t>(ret2.of.i32));
                 }
+                wasmFree(argsPtr, argsAllocSz);
                 base = wasmBase();
                 memSz = wasmMemSize();
                 if (InBounds(memSz, resultPtr, copyLen))
@@ -1166,6 +1176,7 @@ bool CppScriptRuntime::callInvokeRef(uint32_t callbackId, const char* argsSerial
         }
         else
         {
+                wasmFree(argsPtr, argsAllocSz);
                 wasmFree(resultPtr, resultBufMax);
                 result = std::vector<char>{ static_cast<char>(MSGPACK_EMPTY_ARRAY) };
         }

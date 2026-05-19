@@ -270,7 +270,7 @@ class OMClass : public TInterfaces...
         }
         virtual uint32_t OM_DECL AddRef() override
         {
-                return static_cast<uint32_t>(m_refCount.fetch_add(1) + 1);
+                return static_cast<uint32_t>(m_refCount.fetch_add(1, std::memory_order_relaxed) + 1);
         }
         virtual uint32_t OM_DECL Release() override
         {
@@ -388,18 +388,12 @@ namespace fx
 {
 
 using RefCallback = std::function<std::vector<char>(const char* argsSerialized, uint32_t argsSize)>;
-inline ProcessResult spawnProcess(const std::string& command, size_t maxOutputBytes = 1048576, int timeoutMs = 30000)
+
+inline const std::vector<std::string>& cachedFilteredEnv()
 {
-        ProcessResult result{ };
-        int pipefd[2];
-        if (pipe(pipefd) < 0)
+        static const std::vector<std::string> s_env = []
         {
-                result.status = -2;
-                return result;
-        }
-        std::vector<std::string> envStrs;
-        std::vector<char*> envp;
-        {
+                std::vector<std::string> out;
                 std::string envBlob;
                 FILE* envFile = fopen("/proc/self/environ", "rb");
                 if (envFile)
@@ -418,12 +412,27 @@ inline ProcessResult spawnProcess(const std::string& command, size_t maxOutputBy
                                 end = envBlob.size();
                         std::string_view entry(envBlob.data() + pos, end - pos);
                         if (!entry.empty() && entry.substr(0, 16) != "LD_LIBRARY_PATH=")
-                                envStrs.emplace_back(entry);
+                                out.emplace_back(entry);
                         pos = end + 1;
                 }
+                return out;
+        }();
+        return s_env;
+}
+
+inline ProcessResult spawnProcess(const std::string& command, size_t maxOutputBytes = 1048576, int timeoutMs = 30000)
+{
+        ProcessResult result{ };
+        int pipefd[2];
+        if (pipe(pipefd) < 0)
+        {
+                result.status = -2;
+                return result;
         }
-        for (auto& s : envStrs)
-                envp.push_back(s.data());
+        const auto& envStrs = cachedFilteredEnv();
+        std::vector<char*> envp;
+        for (const auto& s : envStrs)
+                envp.push_back(const_cast<char*>(s.data()));
         envp.push_back(nullptr);
         posix_spawn_file_actions_t actions;
         posix_spawn_file_actions_init(&actions);
@@ -789,10 +798,8 @@ class PushEnvironment
         }
         PushEnvironment(const PushEnvironment&) = delete;
         PushEnvironment& operator=(const PushEnvironment&) = delete;
-        PushEnvironment(PushEnvironment&& o) noexcept : m_handler(o.m_handler), m_runtime(o.m_runtime)
+        PushEnvironment(PushEnvironment&& o) noexcept : m_handler(std::move(o.m_handler)), m_runtime(std::move(o.m_runtime))
         {
-                o.m_handler = { };
-                o.m_runtime = { };
         }
 };
 

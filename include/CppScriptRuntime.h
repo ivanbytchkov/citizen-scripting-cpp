@@ -242,7 +242,7 @@ struct Reader
                         }
                         Value v;
                         v.kind = Value::Kind::Object;
-                        v.keys.push_back(std::move(key.scalar));
+                        v.keys.push_back(key.kind == Value::Kind::String ? std::move(key.scalar) : std::string("0"));
                         v.children.push_back(std::move(val));
                         return v;
                 }
@@ -842,8 +842,9 @@ namespace detail
                                                         }
                                                         if (cp >= 0xD800 && cp <= 0xDBFF)
                                                         {
-                                                                if (consume() == '\\' && consume() == 'u')
+                                                                if (pos + 6 <= src.size() && src[pos] == '\\' && src[pos + 1] == 'u')
                                                                 {
+                                                                        pos += 2;
                                                                         unsigned lo = 0;
                                                                         for (int i = 0; i < 4; ++i)
                                                                         {
@@ -858,7 +859,17 @@ namespace detail
                                                                         }
                                                                         if (lo >= 0xDC00 && lo <= 0xDFFF)
                                                                                 cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                                                                        else
+                                                                                cp = 0xFFFD;
                                                                 }
+                                                                else
+                                                                {
+                                                                        cp = 0xFFFD;
+                                                                }
+                                                        }
+                                                        else if (cp >= 0xDC00 && cp <= 0xDFFF)
+                                                        {
+                                                                cp = 0xFFFD;
                                                         }
                                                         if (cp < 0x80)
                                                                 out += static_cast<char>(cp);
@@ -1014,8 +1025,14 @@ namespace detail
                                 bool hasDot = false, hasExp = false;
                                 if (peek() == '-')
                                         ++pos;
+                                size_t digitStart = pos;
                                 while (pos < src.size() && (src[pos] >= '0' && src[pos] <= '9'))
                                         ++pos;
+                                if (pos == digitStart)
+                                {
+                                        error = true;
+                                        return { };
+                                }
                                 if (pos < src.size() && src[pos] == '.')
                                 {
                                         hasDot = true;
@@ -1213,6 +1230,7 @@ extern "C" {
         __attribute__((import_module("fxcpp"), import_name("invoke_function_reference"))) void __fxcppInvokeFunctionReference(const char* ref_str, uint32_t ref_len, const char* args, uint32_t args_len, void* out);
         __attribute__((import_module("fxcpp"), import_name("get_instance_id"))) int32_t __fxcppGetInstanceId();
         __attribute__((import_module("fxcpp"), import_name("spawn_process"))) int32_t __fxcppSpawnProcess(const char* cmd, uint32_t cmd_len, char* out_buf, int32_t out_buf_max);
+        __attribute__((import_module("fxcpp"), import_name("get_last_spawn_exit_code"))) int32_t __fxcppGetLastSpawnExitCode();
         __attribute__((import_module("fxcpp"), import_name("create_worker"))) int32_t __fxcppCreateWorker(const char* fn_name, uint32_t fn_name_len, const char* input, uint32_t input_len);
         __attribute__((import_module("fxcpp"), import_name("poll_worker"))) int32_t __fxcppPollWorker(int32_t worker_id, char* out_buf, int32_t out_buf_max);
         __attribute__((import_module("fxcpp"), import_name("schedule_bookmark"))) void __fxcppScheduleBookmark(int32_t bookmark_id, int32_t deadline_ms);
@@ -2452,6 +2470,7 @@ inline ProcessResult spawnProcess(const std::string& command, int32_t maxOutput 
         else
                 buf.clear();
         result.output = std::move(buf);
+        result.exitCode = __fxcppGetLastSpawnExitCode();
         return result;
 }
 
@@ -2789,6 +2808,7 @@ public:
         bool m_hasValidNativeResult = false;
         fxNativeContext m_lastNativeCtx{ };
         uint32_t m_lastResultPtrMask = 0;
+        int32_t m_lastSpawnExitCode = 0;
 
     private:
         wasmtime_func_t m_fnTickBookmarks{ };
