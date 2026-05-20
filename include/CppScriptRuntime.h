@@ -2481,7 +2481,7 @@ namespace fx
 
 struct WorkerResult
 {
-        int32_t status; // 0 = running, > 0 = bytes written (done), -1 = error, -2 = invalid
+        int32_t status; // >= 0 = done (bytes written), -1 = error, -2 = invalid, -3 = running
         std::string output;
 };
 
@@ -2495,17 +2495,11 @@ inline WorkerResult pollWorker(int32_t workerId, int32_t maxOutput = 65536)
         WorkerResult result{ };
         std::string buf(static_cast<size_t>(maxOutput), '\0');
         int32_t raw = __cfxPollWorker(workerId, buf.data(), maxOutput);
-        if (raw > 0)
-        {
-                result.status = raw;
-                size_t written = static_cast<size_t>(raw - 1);
-                buf.resize(written);
-        }
+        result.status = raw;
+        if (raw >= 0)
+                buf.resize(static_cast<size_t>(raw));
         else
-        {
-                result.status = raw;
                 buf.clear();
-        }
         result.output = std::move(buf);
         return result;
 }

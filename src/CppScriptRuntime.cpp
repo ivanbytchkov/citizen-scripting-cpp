@@ -991,7 +991,7 @@ static wasm_trap_t* CbPollWorker(void* env, wasmtime_caller_t* caller, const was
         }
         if (status == CppScriptRuntime::WorkerState::Running)
         {
-                results[0] = I32Val(0);
+                results[0] = I32Val(-3);
                 return nullptr;
         }
         if (status == CppScriptRuntime::WorkerState::Error)
@@ -1025,7 +1025,7 @@ static wasm_trap_t* CbPollWorker(void* env, wasmtime_caller_t* caller, const was
         if (state->thread.joinable())
                 state->thread.join();
         rt->m_workers.erase(it);
-        results[0] = I32Val(written + 1);
+        results[0] = I32Val(written);
         return nullptr;
 }
 
