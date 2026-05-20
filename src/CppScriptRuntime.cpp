@@ -10,6 +10,7 @@
 
 #include <atomic>
 #include <cstdarg>
+#include <fcntl.h>
 #include <unistd.h>
 
 using namespace fx::cpp;
@@ -301,7 +302,7 @@ static wasm_trap_t* CbInvokeNative(void* env, wasmtime_caller_t* caller, const w
                         uint32_t off = static_cast<uint32_t>(wctx.args[i]);
                         if (off == 0)
                                 hostCtx.arguments[i] = 0;
-                        else if (off >= mem.sz)
+                        else if (!mem.check(off, 1))
                                 return nullptr;
                         else
                                 hostCtx.arguments[i] = reinterpret_cast<uintptr_t>(mem.base + off);
@@ -537,8 +538,12 @@ static wasm_trap_t* CbCreateRef(void* env, wasmtime_caller_t*, const wasmtime_va
 {
         auto* rt = static_cast<CppScriptRuntime*>(env);
         uint32_t callbackId = ArgU32(args[0]);
-        int32_t refIdx = rt->AddFuncRef([rt, callbackId](const char* argsSerialized, uint32_t argsSize) -> std::vector<char>
+        std::weak_ptr<bool> aliveWeak = rt->m_alive;
+        int32_t refIdx = rt->AddFuncRef([rt, callbackId, aliveWeak](const char* argsSerialized, uint32_t argsSize) -> std::vector<char>
         {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive)
+                        throw std::runtime_error("Runtime destroyed, ref callback invalid");
                 std::vector<char> result;
                 if (!rt->callInvokeRef(callbackId, argsSerialized, argsSize, result))
                         throw std::runtime_error("WASM trap in ref callback");
@@ -615,16 +620,17 @@ static wasm_trap_t* CbInvokeFunctionReference(void* env, wasmtime_caller_t* call
         {
                 dataLen = static_cast<uint32_t>(retBuf->GetLength());
                 dataPtr = rt->wasmAlloc(dataLen);
-                if (dataPtr)
-                {
-                        mem.init(caller);
-                        if (mem.check(dataPtr, dataLen))
-                                memcpy(mem.base + dataPtr, retBuf->GetBytes(), dataLen);
-                }
-                else
+                if (!dataPtr)
                         dataLen = 0;
         }
         mem.init(caller);
+        if (dataPtr && dataLen && mem.check(dataPtr, dataLen))
+                memcpy(mem.base + dataPtr, retBuf->GetBytes(), dataLen);
+        else if (dataPtr)
+        {
+                dataPtr = 0;
+                dataLen = 0;
+        }
         if (mem.check(outPtr, 8))
         {
                 memcpy(mem.base + outPtr, &dataPtr, 4);
@@ -689,6 +695,7 @@ static wasm_trap_t* CbSpawnProcess(void* env, wasmtime_caller_t* caller, const w
                 return nullptr;
         }
         std::string cmd(reinterpret_cast<const char*>(mem.base + cmdPtr), cmdLen);
+        LogWarning("Resource '%s' spawning child process: %.256s%s", rt->resourceName().c_str(), cmd.c_str(), cmd.size() > 256 ? "..." : "");
         fx::ProcessResult pr = fx::spawnProcess(cmd);
         rt->m_lastSpawnExitCode = pr.exitCode;
         if (pr.status == -2 || pr.status == -3)
@@ -753,6 +760,21 @@ static const ImportDesc g_imports[] = {
         { "schedule_bookmark", { WASM_I32, WASM_I32 }, { }, CbScheduleBookmark },
         { "is_manifest_version_v2_between", { WASM_I32, WASM_I32, WASM_I32, WASM_I32 }, { WASM_I32 }, CbIsManifestVersionV2Between },
 };
+
+static constexpr size_t NUM_IMPORTS = sizeof(g_imports) / sizeof(g_imports[0]);
+
+static wasm_functype_t** CachedImportFuncTypes()
+{
+        static wasm_functype_t* s_types[NUM_IMPORTS] = { };
+        static bool s_init = false;
+        if (!s_init)
+        {
+                for (size_t i = 0; i < NUM_IMPORTS; ++i)
+                        s_types[i] = MakeFuncType(g_imports[i].params, g_imports[i].results);
+                s_init = true;
+        }
+        return s_types;
+}
 
 static wasm_trap_t* CbWorkerTrace(void*, wasmtime_caller_t* caller, const wasmtime_val_t* args, size_t, wasmtime_val_t*, size_t)
 {
@@ -829,12 +851,12 @@ static wasm_trap_t* CbCreateWorker(void* env, wasmtime_caller_t* caller, const w
                         wasmtime_error_delete(wasi_err);
                 wasi_config_t* wasi = wasi_config_new();
                 wasmtime_context_set_wasi(wasmtime_store_context(store), wasi);
-                for (const auto& imp : g_imports)
+                auto** types = CachedImportFuncTypes();
+                for (size_t i = 0; i < NUM_IMPORTS; ++i)
                 {
+                        const auto& imp = g_imports[i];
                         auto cb = (strcmp(imp.name, "trace") == 0) ? CbWorkerTrace : CbWorkerStub;
-                        auto* ft = MakeFuncType(imp.params, imp.results);
-                        wasmtime_linker_define_func(linker, "cfx", 3, imp.name, strlen(imp.name), ft, cb, nullptr, nullptr);
-                        wasm_functype_delete(ft);
+                        wasmtime_linker_define_func(linker, "cfx", 3, imp.name, strlen(imp.name), types[i], cb, nullptr, nullptr);
                 }
                 wasmtime_instance_t instance{ };
                 wasm_trap_t* trap = nullptr;
@@ -972,18 +994,21 @@ static wasm_trap_t* CbPollWorker(void* env, wasmtime_caller_t* caller, const was
         int32_t written = 0;
         uint32_t outBuf = ArgU32(args[1]);
         int32_t outMax = args[2].of.i32;
-        if (mem.init(caller) && outMax > 0 && mem.check(outBuf, static_cast<size_t>(outMax)))
+        if (!mem.init(caller) || outMax <= 0 || !mem.check(outBuf, static_cast<size_t>(outMax)))
         {
-                size_t copy = std::min<size_t>(workerResult.size(), static_cast<size_t>(outMax) - 1);
+                results[0] = I32Val(-2);
+                return nullptr;
+        }
+        {
+                size_t copy = std::min<size_t>(workerResult.size(), static_cast<size_t>(outMax));
                 if (copy > 0)
                         memcpy(mem.base + outBuf, workerResult.data(), copy);
-                mem.base[outBuf + copy] = '\0';
                 written = static_cast<int32_t>(copy);
         }
         if (state->thread.joinable())
                 state->thread.join();
         rt->m_workers.erase(it);
-        results[0] = I32Val(written >= 0 ? written + 1 : 1);
+        results[0] = I32Val(written + 1);
         return nullptr;
 }
 
@@ -1029,6 +1054,7 @@ result_t OM_DECL CppScriptRuntime::Destroy()
         if (m_destroyed)
                 return FX_S_OK;
         m_destroyed = true;
+        *m_alive = false;
         if (m_bookmarkHost.GetRef())
         {
                 try
@@ -1118,6 +1144,8 @@ void CppScriptRuntime::scheduleWasmBookmark(int32_t wasmId, int32_t deadlineMs)
                 m_wasmToHostBookmark[wasmId] = hostId;
                 m_hostToWasmBookmark[hostId] = wasmId;
         }
+        if (deadlineMs < 0)
+                deadlineMs = 0;
         int64_t deadline = (deadlineMs == 0) ? 0 : -static_cast<int64_t>(deadlineMs);
         m_bookmarkHost->ScheduleBookmark(static_cast<IScriptTickRuntimeWithBookmarks*>(this), hostId, deadline);
 }
@@ -1221,46 +1249,7 @@ bool CppScriptRuntime::callInvokeRef(uint32_t callbackId, const char* argsSerial
         int32_t actualLen = ret.of.i32;
         if (actualLen > 0)
         {
-                uint32_t copyLen = static_cast<uint32_t>(actualLen);
-                if (copyLen > resultBufMax)
-                {
-                        wasmFree(resultPtr, resultBufMax);
-                        resultPtr = wasmAlloc(copyLen);
-                        if (!resultPtr)
-                        {
-                                result = std::vector<char>{ static_cast<char>(MSGPACK_EMPTY_ARRAY) };
-                                return true;
-                        }
-                        uint32_t retryArgsAllocSz = argsSize > 0 ? argsSize : 1;
-                        uint32_t retryArgsPtr = wasmAlloc(retryArgsAllocSz);
-                        if (!retryArgsPtr)
-                        {
-                                wasmFree(resultPtr, copyLen);
-                                result = std::vector<char>{ static_cast<char>(MSGPACK_EMPTY_ARRAY) };
-                                return true;
-                        }
-                        base = wasmBase();
-                        memSz = wasmMemSize();
-                        if (argsSize > 0 && InBounds(memSz, retryArgsPtr, argsSize))
-                                memcpy(base + retryArgsPtr, argsSerialized, argsSize);
-                        wasmtime_val_t a2[5] = {
-                                I32Val(static_cast<int32_t>(callbackId)),
-                                I32Val(static_cast<int32_t>(retryArgsPtr)),
-                                I32Val(static_cast<int32_t>(argsSize)),
-                                I32Val(static_cast<int32_t>(resultPtr)),
-                                I32Val(static_cast<int32_t>(copyLen)),
-                        };
-                        wasmtime_val_t ret2{ };
-                        if (!WasmCall(m_store, m_fnInvokeRef, a2, 5, &ret2, 1, m_resourceName.c_str(), "invoke_ref retry"))
-                        {
-                                wasmFree(retryArgsPtr, retryArgsAllocSz);
-                                wasmFree(resultPtr, copyLen);
-                                result = std::vector<char>{ static_cast<char>(MSGPACK_EMPTY_ARRAY) };
-                                return true;
-                        }
-                        wasmFree(retryArgsPtr, retryArgsAllocSz);
-                        copyLen = std::min(copyLen, static_cast<uint32_t>(ret2.of.i32));
-                }
+                uint32_t copyLen = std::min(static_cast<uint32_t>(actualLen), resultBufMax);
                 base = wasmBase();
                 memSz = wasmMemSize();
                 if (InBounds(memSz, resultPtr, copyLen))
@@ -1268,7 +1257,7 @@ bool CppScriptRuntime::callInvokeRef(uint32_t callbackId, const char* argsSerial
                         result.resize(copyLen);
                         memcpy(result.data(), base + resultPtr, copyLen);
                 }
-                wasmFree(resultPtr, copyLen > resultBufMax ? copyLen : resultBufMax);
+                wasmFree(resultPtr, resultBufMax);
         }
         else
         {
@@ -1302,11 +1291,11 @@ void CppScriptRuntime::wasmRemoveRef(int32_t callbackId)
 
 void CppScriptRuntime::defineImports()
 {
-        for (const auto& imp : g_imports)
+        auto** types = CachedImportFuncTypes();
+        for (size_t i = 0; i < NUM_IMPORTS; ++i)
         {
-                auto* ft = MakeFuncType(imp.params, imp.results);
-                auto* err = wasmtime_linker_define_func(m_linker, "cfx", 3, imp.name, strlen(imp.name), ft, imp.hostCb, this, nullptr);
-                wasm_functype_delete(ft);
+                const auto& imp = g_imports[i];
+                auto* err = wasmtime_linker_define_func(m_linker, "cfx", 3, imp.name, strlen(imp.name), types[i], imp.hostCb, this, nullptr);
                 if (err)
                         LogError("failed to define import '%s': %s", imp.name, ExtractWasmError(err, nullptr).c_str());
         }
@@ -1374,8 +1363,8 @@ void CppScriptRuntime::destroyWasm()
                         w->thread.join();
                 else
                 {
-                        LogWarning("Worker %d in '%s' did not finish within %ds, detaching", id, m_resourceName.c_str(), (WORKER_SHUTDOWN_ATTEMPTS * WORKER_SHUTDOWN_INTERVAL_MS) / 1000);
-                        w->thread.detach();
+                        LogWarning("Worker %d in '%s' did not finish within %ds, force joining", id, m_resourceName.c_str(), (WORKER_SHUTDOWN_ATTEMPTS * WORKER_SHUTDOWN_INTERVAL_MS) / 1000);
+                        w->thread.join();
                 }
         }
         m_workers.clear();
@@ -1456,11 +1445,10 @@ result_t CppScriptRuntime::loadWasm(const std::vector<uint8_t>& wasmBytes, const
                 return FX_E_INVALIDARG;
         }
         {
-                char buf[512];
-                snprintf(buf, sizeof(buf), "Warning: WebAssembly '%s' has been loaded into the c++ rt. This runtime is still in beta and shouldn't be used in production, crashes and breaking changes are to be expected.", m_resourceName.c_str());
+                std::string msg = "Warning: WebAssembly '" + m_resourceName + "' has been loaded into the c++ rt. This runtime is still in beta and shouldn't be used in production, crashes and breaking changes are to be expected.";
                 if (m_host.GetRef())
-                        m_host->ScriptTrace(buf);
-                LogWarning("%s", buf);
+                        m_host->ScriptTrace(const_cast<char*>(msg.c_str()));
+                LogWarning("%s", msg.c_str());
         }
         return FX_S_OK;
 }
@@ -1473,16 +1461,17 @@ result_t OM_DECL CppScriptRuntime::Tick()
         if (m_hasHasPendingWorkFn)
         {
                 wasmtime_val_t ret{ };
-                if (WasmCall(m_store, m_fnHasPendingWork, nullptr, 0, &ret, 1, m_resourceName.c_str(), "has_pending_work trap") && ret.of.i32 == 0)
+                if (!WasmCall(m_store, m_fnHasPendingWork, nullptr, 0, &ret, 1, m_resourceName.c_str(), "has_pending_work trap"))
+                        return FX_S_OK;
+                if (ret.of.i32 == 0)
                         return FX_S_OK;
         }
         fx::PushEnvironment env(static_cast<IScriptRuntime*>(this));
         BoundaryGuard boundary(m_host.GetRef(), static_cast<int64_t>(nextBoundaryId()));
         if (!callVoid(m_fnTick) && m_host.GetRef())
         {
-                char buf[256];
-                snprintf(buf, sizeof(buf), "^1SCRIPT ERROR: @%s: WASM trap in tick handler^7\n", m_resourceName.c_str());
-                m_host->ScriptTrace(buf);
+                std::string msg = "^1SCRIPT ERROR: @" + m_resourceName + ": WASM trap in tick handler^7\n";
+                m_host->ScriptTrace(const_cast<char*>(msg.c_str()));
         }
         return FX_S_OK;
 }
@@ -1565,9 +1554,8 @@ result_t OM_DECL CppScriptRuntime::TriggerEvent(char* eventName, char* argsSeria
         refuelWasm();
         if (!callEvent(nameWasm, static_cast<uint32_t>(name.size()), argsWasm, serializedSize, srcWasm, static_cast<uint32_t>(src.size())) && m_host.GetRef())
         {
-                char buf[512];
-                snprintf(buf, sizeof(buf), "^1SCRIPT ERROR: @%s: WASM trap in event '%s'^7\n", m_resourceName.c_str(), eventName);
-                m_host->ScriptTrace(buf);
+                std::string msg = "^1SCRIPT ERROR: @" + m_resourceName + ": WASM trap in event '" + eventName + "'^7\n";
+                m_host->ScriptTrace(const_cast<char*>(msg.c_str()));
         }
         wasmFree(block, totalSz);
         return FX_S_OK;
@@ -1587,18 +1575,16 @@ result_t OM_DECL CppScriptRuntime::CallRef(int32_t refIdx, char* argsSerialized,
         }
         catch (const std::exception& e)
         {
-                char buf[512];
-                snprintf(buf, sizeof(buf), "^1SCRIPT ERROR: @%s: Unhandled exception in ref %d: %s^7\n", m_resourceName.c_str(), refIdx, e.what());
+                std::string msg = "^1SCRIPT ERROR: @" + m_resourceName + ": Unhandled exception in ref " + std::to_string(refIdx) + ": " + e.what() + "^7\n";
                 if (m_host.GetRef())
-                        m_host->ScriptTrace(buf);
+                        m_host->ScriptTrace(const_cast<char*>(msg.c_str()));
                 result = std::vector<char>{ static_cast<char>(MSGPACK_EMPTY_ARRAY) };
         }
         catch (...)
         {
-                char buf[256];
-                snprintf(buf, sizeof(buf), "^1SCRIPT ERROR: @%s: Unhandled non-standard exception in ref %d^7\n", m_resourceName.c_str(), refIdx);
+                std::string msg = "^1SCRIPT ERROR: @" + m_resourceName + ": Unhandled non-standard exception in ref " + std::to_string(refIdx) + "^7\n";
                 if (m_host.GetRef())
-                        m_host->ScriptTrace(buf);
+                        m_host->ScriptTrace(const_cast<char*>(msg.c_str()));
                 result = std::vector<char>{ static_cast<char>(MSGPACK_EMPTY_ARRAY) };
         }
         auto buf = fx::MakeNew<ScriptBuffer>(std::move(result));
@@ -1674,7 +1660,17 @@ result_t OM_DECL CppScriptRuntime::LoadFile(char* scriptFile)
         {
                 std::vector<uint8_t> wasmBytes;
                 {
-                        FILE* f = fopen(resolvedPath.c_str(), "rb");
+                        int fd = open(resolvedPath.c_str(), O_RDONLY | O_NOFOLLOW);
+                        if (fd < 0)
+                        {
+                                LogError("Cannot open '%s' (O_NOFOLLOW)", resolvedPath.c_str());
+                                return FX_E_INVALIDARG;
+                        }
+                        FILE* f = fdopen(fd, "rb");
+                        if (!f)
+                        {
+                                close(fd);
+                        }
                         if (!f)
                         {
                                 LogError("Cannot open '%s'", resolvedPath.c_str());
@@ -1739,14 +1735,10 @@ result_t OM_DECL CppScriptRuntime::EmitWarning(char* channel, char* message)
         if (message)
         {
                 const char* ch = channel ? channel : "script";
-                char buf[1024];
-                int n = snprintf(buf, sizeof(buf), "[warning:%s] %s\n", ch, message);
-                if (n > 0)
-                {
-                        if (m_host.GetRef())
-                                m_host->ScriptTrace(buf);
-                        fprintf(stderr, "[script:%s] %s", m_resourceName.c_str(), buf);
-                }
+                std::string msg = std::string("[warning:") + ch + "] " + message + "\n";
+                if (m_host.GetRef())
+                        m_host->ScriptTrace(const_cast<char*>(msg.c_str()));
+                fprintf(stderr, "[script:%s] %s", m_resourceName.c_str(), msg.c_str());
         }
         return FX_S_OK;
 }

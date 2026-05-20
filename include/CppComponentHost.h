@@ -516,17 +516,16 @@ inline ProcessResult spawnProcess(const std::string& command, size_t maxOutputBy
         }
         close(pipefd[0]);
         int wstatus = 0;
-        if (waitpid(pid, &wstatus, WNOHANG) == 0)
+        pid_t wp = waitpid(pid, &wstatus, WNOHANG);
+        if (wp == 0)
         {
                 if (timedOut || outputCapped)
-                {
                         kill(pid, SIGKILL);
-                        waitpid(pid, &wstatus, 0);
-                }
-                else
-                {
-                        waitpid(pid, &wstatus, 0);
-                }
+                waitpid(pid, &wstatus, 0);
+        }
+        else if (wp < 0)
+        {
+                wstatus = 0;
         }
         while (!result.output.empty() && result.output.back() == '\n')
                 result.output.pop_back();

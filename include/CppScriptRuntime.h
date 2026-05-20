@@ -2634,6 +2634,16 @@ void __cfxRemoveRef(int32_t callback_id)
 
 #include "CppComponentHost.h"
 
+static wasm_trap_t* CbInvokeNative(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
+static wasm_trap_t* CbCopyStringResult(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
+static wasm_trap_t* CbCancelEvent(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
+static wasm_trap_t* CbWasEventCanceled(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
+static wasm_trap_t* CbSpawnProcess(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
+static wasm_trap_t* CbGetLastSpawnExitCode(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
+static wasm_trap_t* CbCreateRef(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
+static wasm_trap_t* CbCreateWorker(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
+static wasm_trap_t* CbPollWorker(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
+
 namespace fx::cpp
 {
 
@@ -2669,6 +2679,15 @@ FX_DEFINE_GUID(CLSID_CppScriptRuntime, 0xF3A7B9, 0x241D, 0x5E4C, 0x8A, 0x93, 0x2
 
 class CppScriptRuntime final : public fx::OMClass<CppScriptRuntime, IScriptRuntime, IScriptTickRuntime, IScriptEventRuntime, IScriptRefRuntime, IScriptFileHandlingRuntime, IScriptTickRuntimeWithBookmarks, IScriptStackWalkingRuntime, IScriptMemInfoRuntime, IScriptWarningRuntime, IScriptProfiler>
 {
+        friend wasm_trap_t* ::CbInvokeNative(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
+        friend wasm_trap_t* ::CbCopyStringResult(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
+        friend wasm_trap_t* ::CbCancelEvent(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
+        friend wasm_trap_t* ::CbWasEventCanceled(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
+        friend wasm_trap_t* ::CbSpawnProcess(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
+        friend wasm_trap_t* ::CbGetLastSpawnExitCode(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
+        friend wasm_trap_t* ::CbCreateRef(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
+        friend wasm_trap_t* ::CbCreateWorker(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
+        friend wasm_trap_t* ::CbPollWorker(void*, wasmtime_caller_t*, const wasmtime_val_t*, size_t, wasmtime_val_t*, size_t);
 public:
         CppScriptRuntime();
         ~CppScriptRuntime();
@@ -2788,14 +2807,13 @@ public:
         bool m_hasHasPendingWorkFn = false;
         std::unordered_map<int32_t, int32_t> m_refToCallbackId;
 
-    public:
+        std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
         bool m_eventCanceled = false;
         bool m_hasValidNativeResult = false;
         fxNativeContext m_lastNativeCtx{ };
         uint32_t m_lastResultPtrMask = 0;
         int32_t m_lastSpawnExitCode = 0;
 
-    private:
         wasmtime_func_t m_fnTickBookmarks{ };
         bool m_hasTickBookmarksFn = false;
         std::unordered_map<int32_t, uint64_t> m_wasmToHostBookmark;
