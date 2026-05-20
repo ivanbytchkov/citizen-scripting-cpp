@@ -538,11 +538,14 @@ static wasm_trap_t* CbCreateRef(void* env, wasmtime_caller_t*, const wasmtime_va
 {
         auto* rt = static_cast<CppScriptRuntime*>(env);
         uint32_t callbackId = ArgU32(args[0]);
-        std::weak_ptr<bool> aliveWeak = rt->m_alive;
-        int32_t refIdx = rt->AddFuncRef([rt, callbackId, aliveWeak](const char* argsSerialized, uint32_t argsSize) -> std::vector<char>
+        std::weak_ptr<CppScriptRuntime::RefGuard> guardWeak = rt->m_refGuard;
+        int32_t refIdx = rt->AddFuncRef([rt, callbackId, guardWeak](const char* argsSerialized, uint32_t argsSize) -> std::vector<char>
         {
-                auto alive = aliveWeak.lock();
-                if (!alive || !*alive)
+                auto guard = guardWeak.lock();
+                if (!guard)
+                        throw std::runtime_error("Runtime destroyed, ref callback invalid");
+                std::lock_guard<std::mutex> lk(guard->mu);
+                if (!guard->alive)
                         throw std::runtime_error("Runtime destroyed, ref callback invalid");
                 std::vector<char> result;
                 if (!rt->callInvokeRef(callbackId, argsSerialized, argsSize, result))
@@ -1068,7 +1071,10 @@ result_t OM_DECL CppScriptRuntime::Destroy()
         if (m_destroyed)
                 return FX_S_OK;
         m_destroyed = true;
-        *m_alive = false;
+        {
+                std::lock_guard<std::mutex> lk(m_refGuard->mu);
+                m_refGuard->alive = false;
+        }
         if (m_bookmarkHost.GetRef())
         {
                 try
@@ -1674,7 +1680,7 @@ result_t OM_DECL CppScriptRuntime::LoadFile(char* scriptFile)
         {
                 std::vector<uint8_t> wasmBytes;
                 {
-                        int fd = open(resolvedPath.c_str(), O_RDONLY | O_NOFOLLOW);
+                        int fd = open(resolvedPath.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
                         if (fd < 0)
                         {
                                 LogError("Cannot open '%s' (O_NOFOLLOW)", resolvedPath.c_str());

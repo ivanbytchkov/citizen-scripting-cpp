@@ -2813,7 +2813,8 @@ class CppScriptRuntime final : public fx::OMClass<CppScriptRuntime, IScriptRunti
         bool m_hasRemoveRefFn = false;
         bool m_hasHasPendingWorkFn = false;
         std::unordered_map<int32_t, int32_t> m_refToCallbackId;
-        std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
+        struct RefGuard { std::mutex mu; bool alive = true; };
+        std::shared_ptr<RefGuard> m_refGuard = std::make_shared<RefGuard>();
         bool m_eventCanceled = false;
         bool m_hasValidNativeResult = false;
         fxNativeContext m_lastNativeCtx{ };
