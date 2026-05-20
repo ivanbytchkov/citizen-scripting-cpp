@@ -980,12 +980,9 @@ static wasm_trap_t* CbPollWorker(void* env, wasmtime_caller_t* caller, const was
         }
         auto state = it->second;
         CppScriptRuntime::WorkerState::Status status;
-        std::vector<char> workerResult;
         {
                 std::lock_guard<std::mutex> lk(state->mutex);
                 status = state->status;
-                if (status == CppScriptRuntime::WorkerState::Done)
-                        workerResult = std::move(state->result);
         }
         if (status == CppScriptRuntime::WorkerState::Running)
         {
@@ -1001,7 +998,6 @@ static wasm_trap_t* CbPollWorker(void* env, wasmtime_caller_t* caller, const was
                 return nullptr;
         }
         WasmMem mem;
-        int32_t written = 0;
         uint32_t outBuf = ArgU32(args[1]);
         int32_t outMax = args[2].of.i32;
         if (!mem.init(caller) || outMax <= 0 || !mem.check(outBuf, static_cast<size_t>(outMax)))
@@ -1009,6 +1005,12 @@ static wasm_trap_t* CbPollWorker(void* env, wasmtime_caller_t* caller, const was
                 results[0] = I32Val(-2);
                 return nullptr;
         }
+        std::vector<char> workerResult;
+        {
+                std::lock_guard<std::mutex> lk(state->mutex);
+                workerResult = std::move(state->result);
+        }
+        int32_t written = 0;
         {
                 size_t copy = std::min<size_t>(workerResult.size(), static_cast<size_t>(outMax));
                 if (copy > 0)
