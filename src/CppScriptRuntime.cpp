@@ -628,6 +628,8 @@ static wasm_trap_t* CbInvokeFunctionReference(void* env, wasmtime_caller_t* call
                 memcpy(mem.base + dataPtr, retBuf->GetBytes(), dataLen);
         else if (dataPtr)
         {
+                rt->wasmFree(dataPtr, dataLen);
+                mem.init(caller);
                 dataPtr = 0;
                 dataLen = 0;
         }
@@ -765,14 +767,13 @@ static constexpr size_t NUM_IMPORTS = sizeof(g_imports) / sizeof(g_imports[0]);
 
 static wasm_functype_t** CachedImportFuncTypes()
 {
-        static wasm_functype_t* s_types[NUM_IMPORTS] = { };
-        static bool s_init = false;
-        if (!s_init)
+        static wasm_functype_t** s_types = []
         {
+                static wasm_functype_t* arr[NUM_IMPORTS];
                 for (size_t i = 0; i < NUM_IMPORTS; ++i)
-                        s_types[i] = MakeFuncType(g_imports[i].params, g_imports[i].results);
-                s_init = true;
-        }
+                        arr[i] = MakeFuncType(g_imports[i].params, g_imports[i].results);
+                return arr;
+        }();
         return s_types;
 }
 
@@ -837,8 +838,9 @@ static wasm_trap_t* CbCreateWorker(void* env, wasmtime_caller_t* caller, const w
                 return nullptr;
         }
         auto state = std::make_shared<CppScriptRuntime::WorkerState>();
-        rt->m_workers[workerId] = state;
         wasmtime_module_t* mod = wasmtime_module_clone(rt->wasmModule());
+        try
+        {
         state->thread = std::thread([state, mod, fnName, inputData = std::move(inputData)]()
         {
                 auto* eng = CppScriptRuntime::engine();
@@ -954,6 +956,14 @@ static wasm_trap_t* CbCreateWorker(void* env, wasmtime_caller_t* caller, const w
                 wasmtime_store_delete(store);
                 wasmtime_module_delete(mod);
         });
+        }
+        catch (...)
+        {
+                wasmtime_module_delete(mod);
+                results[0] = I32Val(-3);
+                return nullptr;
+        }
+        rt->m_workers[workerId] = state;
         results[0] = I32Val(workerId);
         return nullptr;
 }
