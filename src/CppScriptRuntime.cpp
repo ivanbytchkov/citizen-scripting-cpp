@@ -433,7 +433,7 @@ static wasm_trap_t* CbInvokeNative(void* env, wasmtime_caller_t* caller, const w
                         uint32_t off = static_cast<uint32_t>(wctx.args[i]);
                         if (off == 0)
                                 hostCtx.arguments[i] = 0;
-                        else if (!mem.check(off, 1))
+                        else if (!mem.check(off, 8))
                                 return nullptr;
                         else
                                 hostCtx.arguments[i] = reinterpret_cast<uintptr_t>(mem.base + off);
@@ -1533,8 +1533,45 @@ bool CppScriptRuntime::resolveExports()
         return true;
 }
 
+static struct OrphanedWorkerList
+{
+        struct Entry
+        {
+                std::thread thread;
+                std::shared_ptr<CppScriptRuntime::WorkerState> state;
+        };
+        std::mutex mutex;
+        std::vector<Entry> entries;
+        void reap()
+        {
+                std::lock_guard<std::mutex> lk(mutex);
+                auto it = entries.begin();
+                while (it != entries.end())
+                {
+                        bool done;
+                        {
+                                std::lock_guard<std::mutex> slk(it->state->mutex);
+                                done = it->state->status != CppScriptRuntime::WorkerState::Running;
+                        }
+                        if (done)
+                        {
+                                it->thread.join();
+                                it = entries.erase(it);
+                        }
+                        else
+                                ++it;
+                }
+        }
+        void add(std::thread&& t, std::shared_ptr<CppScriptRuntime::WorkerState> s)
+        {
+                std::lock_guard<std::mutex> lk(mutex);
+                entries.push_back({std::move(t), std::move(s)});
+        }
+} g_orphanedWorkers;
+
 void CppScriptRuntime::destroyWasm()
 {
+        g_orphanedWorkers.reap();
         for (auto& [id, w] : m_workers)
         {
                 if (!w->thread.joinable())
@@ -1553,8 +1590,8 @@ void CppScriptRuntime::destroyWasm()
                         w->thread.join();
                 else
                 {
-                        LogWarning("Worker %d in '%s' did not finish within %ds, detaching", id, m_resourceName.c_str(), (WORKER_SHUTDOWN_ATTEMPTS * WORKER_SHUTDOWN_INTERVAL_MS) / 1000);
-                        w->thread.detach();
+                        LogWarning("Worker %d in '%s' did not finish within %ds, orphaning", id, m_resourceName.c_str(), (WORKER_SHUTDOWN_ATTEMPTS * WORKER_SHUTDOWN_INTERVAL_MS) / 1000);
+                        g_orphanedWorkers.add(std::move(w->thread), w);
                 }
         }
         m_workers.clear();
