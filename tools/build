@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ $# -eq 1 ]] || exit 2
+
+SRC=$1
+[[ -f $SRC ]] || { echo "Error: Source not found: $SRC" >&2; exit 1; }
+OUT=${SRC%.*}.wasm
+
+REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+
+CXX=
+if [[ -n ${CXX_OVERRIDE:-} ]]; then
+        CXX=$CXX_OVERRIDE
+elif [[ -n ${WASI_SDK:-} && -x $WASI_SDK/bin/clang++ ]]; then
+        CXX=$WASI_SDK/bin/clang++
+elif [[ -x /opt/wasi-sdk/bin/clang++ ]]; then
+        CXX=/opt/wasi-sdk/bin/clang++
+elif command -v clang++ >/dev/null 2>&1; then
+        CXX=$(command -v clang++)
+fi
+[[ -n $CXX ]] || { echo "Error: No clang++ found." >&2; exit 1; }
+
+SYSROOT=
+for p in "${WASI_SYSROOT:-}" "${WASI_SDK:-}/share/wasi-sysroot" /usr/share/wasi-sysroot /opt/wasi-sdk/share/wasi-sysroot; do
+        if [[ -n $p && -d $p ]]; then SYSROOT=$p; break; fi
+done
+[[ -n $SYSROOT ]] || { echo "Error: No wasi-sysroot found." >&2; exit 1; }
+
+exec "$CXX" \
+        --target=wasm32-wasip1 \
+        -std=c++23 \
+        -O2 \
+        --sysroot="$SYSROOT" \
+        -fno-exceptions \
+        -I"$REPO_ROOT" \
+        -Wl,--export-memory \
+        "$SRC" \
+        -o "$OUT"

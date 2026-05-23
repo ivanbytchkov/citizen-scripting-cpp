@@ -12,19 +12,21 @@ cd "$PROJECT_DIR"
 rm -rf "$BUILD_DIR"
 
 python3 tools/native_db.py
-python3 tools/embed_sdk.py
 
-premake5 gmake2
+premake5 --os=linux gmake
 make -C "$BUILD_DIR" -f citizen-scripting-cpp.make config=release \
         CC="zig cc -target x86_64-linux-musl" \
         CXX="zig c++ -target x86_64-linux-musl" \
-        -j"$(nproc)"
+        -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 4)" \
+        2> >(grep -v "unable to open library directory '/usr/lib64'" >&2 || true)
+
+tools/build tools/example/server.cpp
 
 cp "$OUT_DIR/libcitizen-scripting-cpp.so" "$SERVER_DIR/"
 
 rm -rf "$RESOURCE_DIR"
 mkdir -p "$RESOURCE_DIR"
-cp "$PROJECT_DIR/tools/example/server.cpp" "$RESOURCE_DIR/server.cpp"
-cp "$PROJECT_DIR/tools/example/fxmanifest.lua" "$RESOURCE_DIR/fxmanifest.lua"
+cp tools/example/server.wasm "$RESOURCE_DIR/server.wasm"
+cp tools/example/fxmanifest.lua "$RESOURCE_DIR/fxmanifest.lua"
 
 echo "Done. Runtime -> $SERVER_DIR, resource -> $RESOURCE_DIR"

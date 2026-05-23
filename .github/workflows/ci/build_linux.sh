@@ -11,7 +11,7 @@ cargo build --release -p wasmtime-c-api --target "$MUSL_TARGET" --manifest-path 
 
 echo "Building runtime..."
 python3 tools/native_db.py
-premake5 gmake2
+premake5 gmake
 make -C build config=release \
         CC="zig cc -target x86_64-linux-musl" \
         CXX="zig c++ -target x86_64-linux-musl" \

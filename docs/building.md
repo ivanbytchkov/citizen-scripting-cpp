@@ -16,14 +16,7 @@ cd citizen-scripting-cpp
 ### Configure and build runtime
 
 ```bash
-premake5 gmake2
-```
-
-This initializes the wasmtime submodule and builds it if needed.
-
-Then build:
-
-```bash
+premake5 gmake
 make -C build -f citizen-scripting-cpp.make config=release \
   CC="zig cc -target x86_64-linux-musl" \
   CXX="zig c++ -target x86_64-linux-musl" \
@@ -36,40 +29,16 @@ Copy `build/bin/Release/libcitizen-scripting-cpp.so` next to your FXServer binar
 
 ### Writing a resource
 
-Just reference your `.cpp` file directly in the manifest:
+To compile a resource you need `clang++` with the `wasm32` target enabled and a wasi-sysroot.
 
-```lua
-server_script 'server.cpp'
+Build your resource with `tools/build`:
+
+```bash
+tools/build path/to/server.cpp # writes path/to/server.wasm
 ```
 
-The server needs the following for compilation:
+Reference the built `.wasm` in your manifest:
 
-- [Clang](https://clang.llvm.org/) - with `wasm32-wasip1` target support
-- [WASI sysroot](https://github.com/WebAssembly/wasi-sdk) – install `wasi-sdk` or `wasi-sysroot` package
-
-Specifically looks in `/usr/share/wasi-sysroot` and `/opt/wasi-sdk/share/wasi-sysroot`, or set `WASI_SYSROOT`.
-
-The runtime compiles resource to `.wasm` automatically when it's started.
-
-The resource is cached and only recompiled when the `.cpp` or the runtime `.so` changes.
-
-### Known issues
-
-- wasmtime-c-api build fails with a linker error
-
-  Ensure `zig` is in your `PATH` and the Rust target is installed:
-  ```bash
-  rustup target add x86_64-unknown-linux-musl
-  ```
-
-- Resource traps immediately on the first tick
-
-  Hitting the fuel limit (1 billion instructions per call).
-
-  Break up heavy work across ticks or use `fx::createWorker`.
-
-- `error: cannot use 'try' with exceptions disabled`
-
-  Resources require `-fno-exceptions`.
-
-  The runtime passes this flag automatically during on-the-fly compilation.
+```lua
+server_script 'server.wasm'
+```

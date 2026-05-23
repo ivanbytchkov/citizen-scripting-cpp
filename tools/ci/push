@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ "$(uname)" == "Darwin" ]] || exit 1
+
+PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+cd "$PROJECT_DIR"
+
+HOST="${DEPLOY_HOST:?Set DEPLOY_HOST to your ssh host/alias}"
+DIR="${DEPLOY_DIR:?Set DEPLOY_DIR to the cfx-server directory on the remote}"
+CONFIG="release"
+BUILD=1
+
+while [[ $# -gt 0 ]]; do
+        case "$1" in
+                --no-build) BUILD=0 ;;
+                --config) CONFIG="$2"; shift ;;
+                -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+                *) echo "Unknown flag: $1" >&2; exit 2 ;;
+        esac
+        shift
+done
+
+CONFIG_DIR="$(tr '[:lower:]' '[:upper:]' <<< "${CONFIG:0:1}")${CONFIG:1}"
+SO_PATH="build/bin/${CONFIG_DIR}/libcitizen-scripting-cpp.so"
+
+if [[ $BUILD -eq 1 ]]; then
+        if [[ ! -f "build/citizen-scripting-cpp.make" ]]; then
+                echo "Generating makefiles..."
+                premake5 --os=linux gmake
+        fi
+        echo "Building ($CONFIG)..."
+        make -C build -f citizen-scripting-cpp.make "config=$CONFIG" \
+                CC="zig cc -target x86_64-linux-musl" \
+                CXX="zig c++ -target x86_64-linux-musl" \
+                -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 4)"
+fi
+
+if [[ ! -f "$SO_PATH" ]]; then
+        echo "Error: $SO_PATH not found" >&2
+        exit 1
+fi
+
+echo "Pushing $SO_PATH -> $HOST:$DIR/"
+if command -v rsync >/dev/null 2>&1; then
+        rsync -avh --progress "$SO_PATH" "$HOST:$DIR/"
+else
+        scp "$SO_PATH" "$HOST:$DIR/"
+fi
+
+echo "Done."

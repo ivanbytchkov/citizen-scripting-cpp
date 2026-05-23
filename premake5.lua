@@ -17,9 +17,6 @@ project "citizen-scripting-cpp"
                 "src/Component.cpp",
         }
         includedirs { ".", "include" }
-        prebuildcommands {
-                "cd %{wks.location}/.. && python3 tools/embed_sdk.py",
-        }
         component()
         filter "configurations:Debug"
                 symbols "On"
