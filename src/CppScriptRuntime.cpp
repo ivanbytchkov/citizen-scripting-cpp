@@ -29,6 +29,7 @@ static constexpr uint32_t WORKER_RESULT_BUF_SIZE = 65536;
 static constexpr int WORKER_SHUTDOWN_ATTEMPTS = 50;
 static constexpr int WORKER_SHUTDOWN_INTERVAL_MS = 100;
 static constexpr size_t MAX_BOOKMARKS_PER_RESOURCE = 1024;
+static constexpr size_t MIN_NATIVE_PTR_BOUNDS = 8;
 
 static std::string GetResourcePath(IScriptHost* host)
 {
@@ -79,7 +80,7 @@ static void Log(LogLevel level, const char* fmt, ...)
 #define LogError(...) Log(LogLevel::Error, __VA_ARGS__)
 #define LogWarning(...) Log(LogLevel::Warning, __VA_ARGS__)
 
-static inline char* Mut(const std::string& s) { return const_cast<char*>(s.c_str()); }
+static inline char* Mut(std::string& s) { return s.data(); }
 
 static bool ValidateScriptPath(const char* scriptFile, const std::string& root, std::string& resolvedPath, std::string& resolvedRoot)
 {
@@ -315,7 +316,7 @@ static wasm_trap_t* CbInvokeNative(void* env, wasmtime_caller_t* caller, const w
                         uint32_t off = static_cast<uint32_t>(wctx.args[i]);
                         if (off == 0)
                                 hostCtx.arguments[i] = 0;
-                        else if (!mem.check(off, 8))
+                        else if (!mem.check(off, MIN_NATIVE_PTR_BOUNDS))
                                 return nullptr;
                         else
                                 hostCtx.arguments[i] = reinterpret_cast<uintptr_t>(mem.base + off);
@@ -386,42 +387,42 @@ static wasm_trap_t* CbCopyStringResult(void* env, wasmtime_caller_t* caller, con
 
 static wasm_trap_t* CbCopyBinaryResult(void* env, wasmtime_caller_t* caller, const wasmtime_val_t* args, size_t, wasmtime_val_t* results, size_t)
 {
-	auto* rt = static_cast<CppScriptRuntime*>(env);
-	if (!rt->m_hasValidNativeResult)
-	{
-		results[0] = I32Val(0);
-		return nullptr;
-	}
-	WasmMem mem;
-	if (!mem.init(caller))
-	{
-		results[0] = I32Val(0);
-		return nullptr;
-	}
-	int32_t ptrIdx = args[1].of.i32;
-	int32_t sizeIdx = args[2].of.i32;
-	uint32_t bufPtr = ArgU32(args[3]);
-	int32_t bufMax = args[4].of.i32;
-	if (ptrIdx < 0 || ptrIdx >= 32 || sizeIdx < 0 || sizeIdx >= 32)
-	{
-		results[0] = I32Val(0);
-		return nullptr;
-	}
-	const void* data = reinterpret_cast<const void*>(rt->m_lastNativeCtx.arguments[ptrIdx]);
-	if (!data)
-	{
-		results[0] = I32Val(0);
-		return nullptr;
-	}
-	static constexpr size_t MAX_BINARY_RESULT = 1u << 24;
-	size_t dataSize = static_cast<size_t>(rt->m_lastNativeCtx.arguments[sizeIdx]);
-	if (dataSize > MAX_BINARY_RESULT)
-		dataSize = MAX_BINARY_RESULT;
-	size_t copy = (bufMax > 0) ? std::min<size_t>(dataSize, static_cast<size_t>(bufMax)) : 0;
-	if (copy && mem.check(bufPtr, copy))
-		memcpy(mem.base + bufPtr, data, copy);
-	results[0] = I32Val(static_cast<int32_t>(dataSize));
-	return nullptr;
+        auto* rt = static_cast<CppScriptRuntime*>(env);
+        if (!rt->m_hasValidNativeResult)
+        {
+                results[0] = I32Val(0);
+                return nullptr;
+        }
+        WasmMem mem;
+        if (!mem.init(caller))
+        {
+                results[0] = I32Val(0);
+                return nullptr;
+        }
+        int32_t ptrIdx = args[1].of.i32;
+        int32_t sizeIdx = args[2].of.i32;
+        uint32_t bufPtr = ArgU32(args[3]);
+        int32_t bufMax = args[4].of.i32;
+        if (ptrIdx < 0 || ptrIdx >= 32 || sizeIdx < 0 || sizeIdx >= 32)
+        {
+                results[0] = I32Val(0);
+                return nullptr;
+        }
+        const void* data = reinterpret_cast<const void*>(rt->m_lastNativeCtx.arguments[ptrIdx]);
+        if (!data)
+        {
+                results[0] = I32Val(0);
+                return nullptr;
+        }
+        static constexpr size_t MAX_BINARY_RESULT = 1u << 24;
+        size_t dataSize = static_cast<size_t>(rt->m_lastNativeCtx.arguments[sizeIdx]);
+        if (dataSize > MAX_BINARY_RESULT)
+                dataSize = MAX_BINARY_RESULT;
+        size_t copy = (bufMax > 0) ? std::min<size_t>(dataSize, static_cast<size_t>(bufMax)) : 0;
+        if (copy && mem.check(bufPtr, copy))
+                memcpy(mem.base + bufPtr, data, copy);
+        results[0] = I32Val(static_cast<int32_t>(dataSize));
+        return nullptr;
 }
 
 static wasm_trap_t* CbEmitEvent(void* env, wasmtime_caller_t* caller, const wasmtime_val_t* args, size_t, wasmtime_val_t*, size_t)
@@ -592,7 +593,7 @@ static wasm_trap_t* CbCreateRef(void* env, wasmtime_caller_t*, const wasmtime_va
         auto* rt = static_cast<CppScriptRuntime*>(env);
         uint32_t callbackId = ArgU32(args[0]);
         std::weak_ptr<CppScriptRuntime::RefGuard> guardWeak = rt->m_refGuard;
-        int32_t refIdx = rt->AddFuncRef([rt, callbackId, guardWeak](const char* argsSerialized, uint32_t argsSize) -> std::vector<char>
+        int32_t refIdx = rt->AddFuncRef([callbackId, guardWeak](const char* argsSerialized, uint32_t argsSize) -> std::vector<char>
         {
                 auto guard = guardWeak.lock();
                 if (!guard)
@@ -601,7 +602,7 @@ static wasm_trap_t* CbCreateRef(void* env, wasmtime_caller_t*, const wasmtime_va
                 if (!guard->alive)
                         throw std::runtime_error("Runtime destroyed, ref callback invalid");
                 std::vector<char> result;
-                if (!rt->callInvokeRef(callbackId, argsSerialized, argsSize, result))
+                if (!guard->rt->callInvokeRef(callbackId, argsSerialized, argsSize, result))
                         throw std::runtime_error("WASM trap in ref callback");
                 return result;
         });
@@ -828,6 +829,17 @@ static wasm_functype_t** CachedImportFuncTypes()
                 static wasm_functype_t* arr[NUM_IMPORTS];
                 for (size_t i = 0; i < NUM_IMPORTS; ++i)
                         arr[i] = MakeFuncType(g_imports[i].params, g_imports[i].results);
+                atexit([]
+                {
+                        for (size_t i = 0; i < NUM_IMPORTS; ++i)
+                        {
+                                if (arr[i])
+                                {
+                                        wasm_functype_delete(arr[i]);
+                                        arr[i] = nullptr;
+                                }
+                        }
+                });
                 return arr;
         }();
         return s_types;
@@ -1097,6 +1109,7 @@ CppScriptRuntime::CppScriptRuntime()
         } while (id == 0 || s_activeInstanceIds.count(id));
         s_activeInstanceIds.insert(id);
         m_instanceId = id;
+        m_refGuard->rt = this;
 }
 
 CppScriptRuntime::~CppScriptRuntime()
@@ -1455,26 +1468,40 @@ static struct OrphanedWorkerList
 void CppScriptRuntime::destroyWasm()
 {
         g_orphanedWorkers.reap();
-        for (auto& [id, w] : m_workers)
+        if (!m_workers.empty())
         {
-                if (!w->thread.joinable())
-                        continue;
-                bool done = false;
-                for (int i = 0; i < WORKER_SHUTDOWN_ATTEMPTS && !done; ++i)
+                auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(WORKER_SHUTDOWN_ATTEMPTS * WORKER_SHUTDOWN_INTERVAL_MS);
+                bool allDone = false;
+                while (!allDone && std::chrono::steady_clock::now() < deadline)
                 {
+                        allDone = true;
+                        for (auto& [id, w] : m_workers)
+                        {
+                                if (!w->thread.joinable())
+                                        continue;
+                                std::lock_guard<std::mutex> lk(w->mutex);
+                                if (w->status == WorkerState::Running)
+                                        allDone = false;
+                        }
+                        if (!allDone)
+                                std::this_thread::sleep_for(std::chrono::milliseconds(WORKER_SHUTDOWN_INTERVAL_MS));
+                }
+                for (auto& [id, w] : m_workers)
+                {
+                        if (!w->thread.joinable())
+                                continue;
+                        bool done;
                         {
                                 std::lock_guard<std::mutex> lk(w->mutex);
                                 done = w->status != WorkerState::Running;
                         }
-                        if (!done)
-                                std::this_thread::sleep_for(std::chrono::milliseconds(WORKER_SHUTDOWN_INTERVAL_MS));
-                }
-                if (done)
-                        w->thread.join();
-                else
-                {
-                        LogWarning("Worker %d in '%s' did not finish within %ds, orphaning", id, m_resourceName.c_str(), (WORKER_SHUTDOWN_ATTEMPTS * WORKER_SHUTDOWN_INTERVAL_MS) / 1000);
-                        g_orphanedWorkers.add(std::move(w->thread), w);
+                        if (done)
+                                w->thread.join();
+                        else
+                        {
+                                LogWarning("Worker %d in '%s' did not finish within %ds, orphaning", id, m_resourceName.c_str(), (WORKER_SHUTDOWN_ATTEMPTS * WORKER_SHUTDOWN_INTERVAL_MS) / 1000);
+                                g_orphanedWorkers.add(std::move(w->thread), w);
+                        }
                 }
         }
         m_workers.clear();
@@ -1570,6 +1597,7 @@ result_t OM_DECL CppScriptRuntime::Tick()
         if (!m_hasTickFn)
                 return FX_S_OK;
         refuelWasm();
+        fx::PushEnvironment env(static_cast<IScriptRuntime*>(this));
         if (m_hasHasPendingWorkFn)
         {
                 wasmtime_val_t ret{ };
@@ -1578,7 +1606,6 @@ result_t OM_DECL CppScriptRuntime::Tick()
                 if (ret.of.i32 == 0)
                         return FX_S_OK;
         }
-        fx::PushEnvironment env(static_cast<IScriptRuntime*>(this));
         BoundaryGuard boundary(m_host.GetRef(), static_cast<int64_t>(nextBoundaryId()));
         if (!callVoid(m_fnTick) && m_host.GetRef())
         {
@@ -1741,16 +1768,31 @@ int32_t OM_DECL CppScriptRuntime::HandlesFile(char* scriptFile, IScriptHostWithR
         if (!scriptFile)
                 return 0;
         std::string_view file(scriptFile);
-        if (file.ends_with(".wasm") || file.ends_with(".cpp"))
+        if (file.ends_with(".wasm"))
                 return 1;
         return 0;
 }
 
-static bool ReadFileBytes(const std::string& path, std::vector<uint8_t>& out)
+static bool ReadFileBytes(const std::string& path, const std::string& resolvedRoot, std::vector<uint8_t>& out)
 {
         int fd = open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
         if (fd < 0)
                 return false;
+        char fdLink[64];
+        snprintf(fdLink, sizeof(fdLink), "/proc/self/fd/%d", fd);
+        char* fdResolved = realpath(fdLink, nullptr);
+        if (!fdResolved)
+        {
+                close(fd);
+                return false;
+        }
+        bool pathOk = (strncmp(fdResolved, resolvedRoot.c_str(), resolvedRoot.size()) == 0 && (fdResolved[resolvedRoot.size()] == '/' || fdResolved[resolvedRoot.size()] == '\0'));
+        free(fdResolved);
+        if (!pathOk)
+        {
+                close(fd);
+                return false;
+        }
         FILE* f = fdopen(fd, "rb");
         if (!f)
         {
@@ -1795,15 +1837,10 @@ result_t OM_DECL CppScriptRuntime::LoadFile(char* scriptFile)
                 return FX_E_INVALIDARG;
         m_scriptFile = scriptFile;
         std::string_view file(scriptFile);
-        if (file.ends_with(".cpp"))
-        {
-                LogError("Resource '%s' references '%s'. On-the-fly compilation has been removed; build it first with tools/build and reference the resulting .wasm in fxmanifest.lua.", m_resourceName.c_str(), scriptFile);
-                return FX_E_INVALIDARG;
-        }
         if (file.ends_with(".wasm"))
         {
                 std::vector<uint8_t> wasmBytes;
-                if (!ReadFileBytes(resolvedPath, wasmBytes))
+                if (!ReadFileBytes(resolvedPath, resolvedRoot, wasmBytes))
                 {
                         LogError("Failed to read '%s'", resolvedPath.c_str());
                         return FX_E_INVALIDARG;

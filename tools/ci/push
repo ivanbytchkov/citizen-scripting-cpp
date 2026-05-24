@@ -21,8 +21,7 @@ while [[ $# -gt 0 ]]; do
         shift
 done
 
-CONFIG_DIR="$(tr '[:lower:]' '[:upper:]' <<< "${CONFIG:0:1}")${CONFIG:1}"
-SO_PATH="build/bin/${CONFIG_DIR}/libcitizen-scripting-cpp.so"
+SO_PATH="build/bin/$(tr '[:lower:]' '[:upper:]' <<< "${CONFIG:0:1}")${CONFIG:1}/libcitizen-scripting-cpp.so"
 
 if [[ $BUILD -eq 1 ]]; then
         if [[ ! -f "build/citizen-scripting-cpp.make" ]]; then

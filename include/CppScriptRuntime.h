@@ -1425,12 +1425,30 @@ struct Context
                 Value decoded = decode(args, argsLen);
                 ensureArray(decoded);
                 fx::EventArgs ea(std::move(decoded));
-                auto handlers = it->second;
+                std::vector<int32_t> handlerIds;
+                handlerIds.reserve(it->second.size());
+                for (const auto& entry : it->second)
+                        handlerIds.push_back(entry.id);
                 char eventCtx[256];
                 snprintf(eventCtx, sizeof(eventCtx), "event '%s'", key.c_str());
-                for (auto& entry : handlers)
+                for (auto handlerId : handlerIds)
                 {
-                        safeInvoke([&] { entry.handler(srcStr, ea); }, resourceName.c_str(), eventCtx);
+                        auto jt = events.find(key);
+                        if (jt == events.end())
+                                break;
+                        auto& vec = jt->second;
+                        EventHandlerEntry* found = nullptr;
+                        for (auto& e : vec)
+                        {
+                                if (e.id == handlerId)
+                                {
+                                        found = &e;
+                                        break;
+                                }
+                        }
+                        if (!found)
+                                continue;
+                        safeInvoke([&] { found->handler(srcStr, ea); }, resourceName.c_str(), eventCtx);
                         if (__cfxWasEventCanceled())
                                 break;
                 }
@@ -2850,7 +2868,12 @@ class CppScriptRuntime final : public fx::OMClass<CppScriptRuntime, IScriptRunti
         bool m_hasRemoveRefFn = false;
         bool m_hasHasPendingWorkFn = false;
         std::unordered_map<int32_t, int32_t> m_refToCallbackId;
-        struct RefGuard { std::recursive_mutex mu; bool alive = true; };
+        struct RefGuard
+        {
+                std::recursive_mutex mu;
+                bool alive = true;
+                CppScriptRuntime* rt = nullptr;
+        };
         std::shared_ptr<RefGuard> m_refGuard = std::make_shared<RefGuard>();
         bool m_eventCanceled = false;
         bool m_hasValidNativeResult = false;

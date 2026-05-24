@@ -1,13 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-PROJECT_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
-MUSL_TARGET="x86_64-unknown-linux-musl"
-
-cd "$PROJECT_DIR"
+cd "$(cd "$(dirname "$0")/../../.." && pwd)"
 
 echo "Building wasmtime..."
-cargo build --release -p wasmtime-c-api --target "$MUSL_TARGET" --manifest-path vendor/wasmtime/Cargo.toml
+cargo build --release -p wasmtime-c-api --target x86_64-unknown-linux-musl --manifest-path vendor/wasmtime/Cargo.toml
 
 echo "Building runtime..."
 python3 tools/native_db.py

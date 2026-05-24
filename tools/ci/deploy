@@ -5,7 +5,6 @@ SERVER_DIR="${FX_SERVER_DIR:?Set FX_SERVER_DIR to your cfx-server directory}"
 RESOURCE_DIR="${FX_RESOURCE_DIR:?Set FX_RESOURCE_DIR to your resource directory}"
 PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 BUILD_DIR="$PROJECT_DIR/build"
-OUT_DIR="$BUILD_DIR/bin/Release"
 
 cd "$PROJECT_DIR"
 
@@ -22,11 +21,13 @@ make -C "$BUILD_DIR" -f citizen-scripting-cpp.make config=release \
 
 tools/build tools/example/server.cpp
 
-cp "$OUT_DIR/libcitizen-scripting-cpp.so" "$SERVER_DIR/"
+cp "$BUILD_DIR/bin/Release/libcitizen-scripting-cpp.so" "$SERVER_DIR/"
 
 rm -rf "$RESOURCE_DIR"
 mkdir -p "$RESOURCE_DIR"
 cp tools/example/server.wasm "$RESOURCE_DIR/server.wasm"
 cp tools/example/fxmanifest.lua "$RESOURCE_DIR/fxmanifest.lua"
+
+rm -f tools/example/server.wasm
 
 echo "Done. Runtime -> $SERVER_DIR, resource -> $RESOURCE_DIR"

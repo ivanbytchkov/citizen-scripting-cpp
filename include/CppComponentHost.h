@@ -499,6 +499,8 @@ inline ProcessResult spawnProcess(const std::string& command, size_t maxOutputBy
                         break;
                 }
                 ssize_t n = read(pipefd[0], buf, sizeof(buf));
+                if (n < 0 && (errno == EINTR || errno == EAGAIN))
+                        continue;
                 if (n <= 0)
                         break;
                 size_t avail = maxOutputBytes > result.output.size() ? maxOutputBytes - result.output.size() : 0;

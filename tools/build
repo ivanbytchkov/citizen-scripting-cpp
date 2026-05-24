@@ -7,8 +7,6 @@ SRC=$1
 [[ -f $SRC ]] || { echo "Error: Source not found: $SRC" >&2; exit 1; }
 OUT=${SRC%.*}.wasm
 
-REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
-
 CXX=
 if [[ -n ${CXX_OVERRIDE:-} ]]; then
         CXX=$CXX_OVERRIDE
@@ -33,7 +31,7 @@ exec "$CXX" \
         -O2 \
         --sysroot="$SYSROOT" \
         -fno-exceptions \
-        -I"$REPO_ROOT" \
+        -I"$(cd "$(dirname "$0")/.." && pwd)" \
         -Wl,--export-memory \
         "$SRC" \
         -o "$OUT"
