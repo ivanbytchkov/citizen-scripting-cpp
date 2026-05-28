@@ -1698,8 +1698,9 @@ result_t OM_DECL CppScriptRuntime::TickBookmarks(uint64_t* bookmarks, int32_t nu
         fx::PushEnvironment env(static_cast<IScriptRuntime*>(this));
         BoundaryGuard boundary(m_host.GetRef(), static_cast<int64_t>(nextBoundaryId()));
         wasmtime_val_t args[2] = { I32Val(static_cast<int32_t>(arrPtr)), I32Val(static_cast<int32_t>(wasmIds.size())) };
-        WasmCall(m_store, m_fnTickBookmarks, args, 2, nullptr, 0, m_resourceName.c_str(), "tick_bookmarks trap");
-        wasmFree(arrPtr, arrSize);
+        bool ok = WasmCall(m_store, m_fnTickBookmarks, args, 2, nullptr, 0, m_resourceName.c_str(), "tick_bookmarks trap");
+        if (ok)
+                wasmFree(arrPtr, arrSize);
         return FX_S_OK;
 }
 
