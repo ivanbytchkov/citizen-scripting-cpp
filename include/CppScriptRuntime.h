@@ -2762,7 +2762,7 @@ struct Wait
 };
 
 template<typename F>
-inline void createThread(F&& fn)
+inline void createCoroutine(F&& fn)
 {
         auto* c = fxw_internal::currentContext();
         if (!c)
@@ -2785,6 +2785,9 @@ inline void createThread(F&& fn)
         coros[id] = { task.handle, std::move(stored), std::chrono::steady_clock::now() };
         __cfxScheduleBookmark(id, 0);
 }
+
+template<typename F>
+inline void createThread(F&& fn) { createCoroutine(std::forward<F>(fn)); }
 
 inline ProcessResult spawnProcess(const std::string& command, int32_t maxOutput = 65536)
 {
