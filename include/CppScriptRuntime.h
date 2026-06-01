@@ -2563,6 +2563,9 @@ inline void clearTimer(int32_t id)
                 c->timers.erase(id);
 }
 
+inline void clearTimeout(int32_t id) { clearTimer(id); }
+inline void clearInterval(int32_t id) { clearTimer(id); }
+
 inline void setKvp(const std::string& key, const std::string& value)
 {
         natives::invoke(HashString("SET_RESOURCE_KVP"), key.c_str(), value.c_str());
