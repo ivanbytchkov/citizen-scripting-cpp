@@ -407,7 +407,7 @@ inline const std::vector<std::string>& cachedFilteredEnv()
                         bool allowed = false;
                         for (auto prefix : kAllowedPrefixes)
                         {
-                                if (entry.size() >= prefix.size() && entry.substr(0, prefix.size()) == prefix)
+                                if (entry.starts_with(prefix))
                                 {
                                         allowed = true;
                                         break;
