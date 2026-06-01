@@ -309,6 +309,28 @@ struct Value
                                 return children[i];
                 return nullValue();
         }
+
+        static Value array(std::vector<Value> items)
+        {
+                Value v;
+                v.kind = Kind::Array;
+                v.children = std::move(items);
+                return v;
+        }
+
+        static Value object(std::initializer_list<std::pair<std::string, Value>> entries)
+        {
+                Value v;
+                v.kind = Kind::Object;
+                v.keys.reserve(entries.size());
+                v.children.reserve(entries.size());
+                for (auto& [k, val] : entries)
+                {
+                        v.keys.push_back(k);
+                        v.children.push_back(val);
+                }
+                return v;
+        }
 };
 
 struct Reader
@@ -611,12 +633,7 @@ inline Value decode(const void* data, uint32_t size)
 inline void ensureArray(Value& v)
 {
         if (v.kind != Value::Kind::Array)
-        {
-                Value arr;
-                arr.kind = Value::Kind::Array;
-                arr.children.push_back(std::move(v));
-                v = std::move(arr);
-        }
+                v = Value::array({ std::move(v) });
 }
 
 struct Writer : fx::MsgpackWriter
@@ -2366,10 +2383,7 @@ inline void addExport(const std::string& name, ExportHandler handler)
                 fxw_internal::ensureArray(decoded);
                 EventArgs ea(std::move(decoded));
                 json::Value result = handler(ea);
-                fxw_internal::Value arr;
-                arr.kind = fxw_internal::Value::Kind::Array;
-                arr.children.push_back(std::move(result));
-                return fxw_internal::encode(arr);
+                return fxw_internal::encode(fxw_internal::Value::array({ std::move(result) }));
         });
         if (exportRef.empty())
                 return;
@@ -2385,10 +2399,7 @@ inline void addExport(const std::string& name, ExportHandler handler)
                 fxw_internal::Value refVal;
                 refVal.kind = fxw_internal::Value::Kind::FuncRef;
                 refVal.scalar = exportRef;
-                fxw_internal::Value arr;
-                arr.kind = fxw_internal::Value::Kind::Array;
-                arr.children.push_back(std::move(refVal));
-                auto payload = fxw_internal::encode(arr);
+                auto payload = fxw_internal::encode(fxw_internal::Value::array({ std::move(refVal) }));
                 detail::invokeFunctionReference(setterRef, payload.data(), static_cast<uint32_t>(payload.size()));
         });
 }
@@ -2419,10 +2430,7 @@ namespace detail
                 fxw_internal::Value setterVal;
                 setterVal.kind = fxw_internal::Value::Kind::FuncRef;
                 setterVal.scalar = setterRefStr;
-                fxw_internal::Value setterArr;
-                setterArr.kind = fxw_internal::Value::Kind::Array;
-                setterArr.children.push_back(std::move(setterVal));
-                auto setterPayload = fxw_internal::encode(setterArr);
+                auto setterPayload = fxw_internal::encode(fxw_internal::Value::array({ std::move(setterVal) }));
                 std::string eventName = "__cfx_export_" + resource + "_" + name;
                 __cfxEmitEvent(eventName.c_str(), static_cast<uint32_t>(eventName.size()), setterPayload.data(), static_cast<uint32_t>(setterPayload.size()));
                 removeRef(setterRef);
@@ -2445,10 +2453,7 @@ inline json::Value callExport(const std::string& resource, const std::string& na
                         return { };
                 cache.emplace(cacheKey, exportRef);
         }
-        fxw_internal::Value argArr;
-        argArr.kind = fxw_internal::Value::Kind::Array;
-        argArr.children = args;
-        auto userPayload = fxw_internal::encode(argArr);
+        auto userPayload = fxw_internal::encode(fxw_internal::Value::array(args));
         auto retData = detail::invokeFunctionReference(exportRef, userPayload.data(), static_cast<uint32_t>(userPayload.size()));
         if (retData.empty())
         {
