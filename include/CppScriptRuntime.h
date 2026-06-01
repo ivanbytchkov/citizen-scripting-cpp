@@ -2871,6 +2871,31 @@ inline void createCoroutine(F&& fn)
 }
 
 template<typename F>
+inline void createCoroutineNow(F&& fn)
+{
+        auto* c = fxw_internal::currentContext();
+        if (!c)
+                return;
+        auto& coros = fxw_internal::coroutines();
+        if (coros.size() >= fxw_internal::MAX_COROUTINES)
+        {
+                fprintf(stderr, "[script:%s] coroutine limit (%zu) reached, dropping new thread\n", c->resourceName.c_str(), fxw_internal::MAX_COROUTINES);
+                return;
+        }
+        auto stored = std::make_shared<std::decay_t<F>>(std::forward<F>(fn));
+        auto task = (*stored)();
+        auto& nextId = fxw_internal::nextCoroutineId();
+        int32_t id = fx::allocateId(nextId, coros);
+        if (id < 0)
+        {
+                fprintf(stderr, "[script:%s] no free coroutine id, dropping new thread\n", c->resourceName.c_str());
+                return;
+        }
+        coros[id] = { task.handle, std::move(stored), std::chrono::steady_clock::now() };
+        fxw_internal::resumeCoroutineById(id);
+}
+
+template<typename F>
 inline void createThread(F&& fn) { createCoroutine(std::forward<F>(fn)); }
 
 inline ProcessResult spawnProcess(const std::string& command, int32_t maxOutput = 65536)
