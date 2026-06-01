@@ -268,6 +268,11 @@ struct Value
                 return kind == Kind::Number ? static_cast<float>(numVal) : def;
         }
 
+        int64_t asInt64(int64_t def = 0) const
+        {
+                return kind == Kind::Number ? static_cast<int64_t>(numVal) : def;
+        }
+
         bool asBool(bool def = false) const
         {
                 return kind == Kind::Bool ? boolVal : def;
@@ -1400,6 +1405,12 @@ template<>
 inline float EventArgs::get<float>(size_t i) const
 {
         return floating(i);
+}
+
+template<>
+inline int64_t EventArgs::get<int64_t>(size_t i) const
+{
+        return m_arr.at(i).asInt64();
 }
 
 template<>
@@ -2933,26 +2944,26 @@ void __cfxRemoveRefCallback(int32_t callback_id)
         }
 }
 
-#define CFX_WASM_ENTRY                                                                                                  \
-        static void _cfx_wasm_body();                                                                                   \
-        CFX_WASM_EXPORT(__cfx_init)                                                                                     \
-        void __cfx_init()                                                                                               \
-        {                                                                                                               \
-                static fxw_internal::Context s_ctx;                                                                     \
-                fxw_internal::currentContext() = &s_ctx;                                                                \
-                {                                                                                                       \
-                        static constexpr const char k[] = "resource_name";                                              \
-                        int32_t len = __cfxGetResourceMetadata(k, sizeof(k) - 1, 0, nullptr, 0);                        \
-                        if (len > 0)                                                                                    \
-                        {                                                                                               \
-                                s_ctx.resourceName.resize(static_cast<size_t>(len));                                    \
-                                __cfxGetResourceMetadata(k, sizeof(k) - 1, 0, s_ctx.resourceName.data(), len + 1);      \
-                        }                                                                                               \
-                }                                                                                                       \
-                _cfx_wasm_body();                                                                                       \
-        }                                                                                                               \
-        static void _cfx_wasm_body()
-#define Server CFX_WASM_ENTRY
+void cfx_main();
+
+CFX_WASM_EXPORT(__cfx_init)
+void __cfx_init()
+{
+        static fxw_internal::Context s_ctx;
+        fxw_internal::currentContext() = &s_ctx;
+        {
+                static constexpr const char k[] = "resource_name";
+                int32_t len = __cfxGetResourceMetadata(k, sizeof(k) - 1, 0, nullptr, 0);
+                if (len > 0)
+                {
+                        s_ctx.resourceName.resize(static_cast<size_t>(len));
+                        __cfxGetResourceMetadata(k, sizeof(k) - 1, 0, s_ctx.resourceName.data(), len + 1);
+                }
+        }
+        cfx_main();
+}
+
+#define Server void cfx_main()
 
 #include "../src/DB.h"
 
