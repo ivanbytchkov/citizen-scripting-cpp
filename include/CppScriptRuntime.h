@@ -1901,10 +1901,11 @@ namespace detail
                         ctx.args[idx] = reinterpret_cast<uint64_t>(arg.c_str());
                         ctx.ptrMask |= (1u << idx);
                 }
-                else if constexpr (std::is_same_v<D, float>)
+                else if constexpr (std::is_floating_point_v<D>)
                 {
+                        float f = static_cast<float>(arg);
                         uint32_t bits;
-                        memcpy(&bits, &arg, 4);
+                        memcpy(&bits, &f, 4);
                         ctx.args[idx] = bits;
                 }
                 else if constexpr (std::is_same_v<D, bool>)
