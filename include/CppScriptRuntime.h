@@ -309,8 +309,8 @@ struct Value
                 return *this;
         }
 
-        Value(int v) : kind(Kind::Number), numVal(static_cast<double>(v)), isIntegral(true) { }
-        Value(int64_t v) : kind(Kind::Number), numVal(static_cast<double>(v)), isIntegral(true) { }
+        Value(int v) : kind(Kind::Number), isIntegral(true), numVal(static_cast<double>(v)) { }
+        Value(int64_t v) : kind(Kind::Number), isIntegral(true), numVal(static_cast<double>(v)) { }
         Value(double v) : kind(Kind::Number), numVal(v) { }
         Value(float v) : kind(Kind::Number), numVal(static_cast<double>(v)) { }
         Value(bool b) : kind(Kind::Bool), boolVal(b) { }

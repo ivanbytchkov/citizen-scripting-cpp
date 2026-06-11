@@ -1187,6 +1187,7 @@ result_t OM_DECL CppScriptRuntime::Destroy()
         if (m_hasStopFn)
         {
                 fx::PushEnvironment env(static_cast<IScriptRuntime*>(this));
+                BoundaryGuard boundary(m_host.GetRef(), static_cast<int64_t>(nextBoundaryId()));
                 refuelWasm();
                 callVoid(m_fnStop);
         }
